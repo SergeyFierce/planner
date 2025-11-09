@@ -1,122 +1,288 @@
 import 'package:flutter/material.dart';
 
+import 'app_logic.dart';
+
 void main() {
-  runApp(const MyApp());
+  runApp(const PlannerApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class PlannerApp extends StatelessWidget {
+  const PlannerApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Planner',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF111217),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF6C63FF),
+          brightness: Brightness.dark,
+        ),
+        fontFamily: 'Roboto',
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const _AppShell(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class _AppShell extends StatefulWidget {
+  const _AppShell();
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<_AppShell> createState() => _AppShellState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _AppShellState extends State<_AppShell> {
+  late final AppState _appState;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _appState = AppState();
+  }
+
+  @override
+  void dispose() {
+    _appState.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+    return AnimatedBuilder(
+      animation: _appState,
+      builder: (context, _) {
+        return Scaffold(
+          body: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 350),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder: (child, animation) {
+              final offsetAnimation = Tween<Offset>(
+                begin: const Offset(0.05, 0),
+                end: Offset.zero,
+              ).animate(CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOut,
+              ));
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: offsetAnimation,
+                  child: child,
+                ),
+              );
+            },
+            child: _screens[_appState.currentIndex],
+          ),
+          bottomNavigationBar: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            child: _BottomNavigationBar(
+              currentIndex: _appState.currentIndex,
+              onItemSelected: _appState.selectTab,
             ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+          ),
+        );
+      },
     );
   }
 }
+
+class _BottomNavigationBar extends StatelessWidget {
+  const _BottomNavigationBar({
+    required this.currentIndex,
+    required this.onItemSelected,
+  });
+
+  final int currentIndex;
+  final ValueChanged<int> onItemSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1D24).withOpacity(0.95),
+        borderRadius: BorderRadius.circular(36),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          for (var i = 0; i < _tabs.length; i++)
+            Expanded(
+              child: _CapsuleNavItem(
+                tab: _tabs[i],
+                selected: currentIndex == i,
+                onTap: () => onItemSelected(i),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CapsuleNavItem extends StatelessWidget {
+  const _CapsuleNavItem({
+    required this.tab,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _TabItem tab;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final labelStyle = Theme.of(context).textTheme.labelLarge?.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.w600,
+        );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(24),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: selected ? Colors.white.withOpacity(0.12) : Colors.transparent,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  tab.icon,
+                  color: selected ? Colors.white : Colors.white70,
+                ),
+                const SizedBox(width: 6),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+                  transitionBuilder: (child, animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: SizeTransition(
+                        sizeFactor: animation,
+                        axis: Axis.horizontal,
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: selected
+                      ? Text(
+                          tab.label,
+                          key: ValueKey(tab.label),
+                          style: labelStyle,
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TabItem {
+  const _TabItem({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+}
+
+class _ScreenPlaceholder extends StatelessWidget {
+  const _ScreenPlaceholder({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.index,
+  }) : super(key: ValueKey<int>(index));
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 72,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 24),
+          Text(
+            title,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Colors.white70,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+const List<_TabItem> _tabs = <_TabItem>[
+  _TabItem(icon: Icons.calendar_today_rounded, label: 'Календарь'),
+  _TabItem(icon: Icons.bar_chart_rounded, label: 'Статистика'),
+  _TabItem(icon: Icons.settings_rounded, label: 'Настройки'),
+];
+
+final List<Widget> _screens = <Widget>[
+  const _ScreenPlaceholder(
+    icon: Icons.calendar_today_rounded,
+    title: 'Календарь',
+    subtitle: 'Здесь появится ваш планировщик событий и встреч.',
+    index: 0,
+  ),
+  const _ScreenPlaceholder(
+    icon: Icons.bar_chart_rounded,
+    title: 'Статистика',
+    subtitle: 'Отчёты и аналитика по вашим задачам будут здесь.',
+    index: 1,
+  ),
+  const _ScreenPlaceholder(
+    icon: Icons.settings_rounded,
+    title: 'Настройки',
+    subtitle: 'Настройте приложение под себя в этом разделе.',
+    index: 2,
+  ),
+];
