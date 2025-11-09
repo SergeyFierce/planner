@@ -25,7 +25,7 @@ class _NavigationItem {
 }
 
 class _AppShellState extends State<AppShell> {
-  static const _navAnimationDuration = Duration(milliseconds: 300);
+  static const _navAnimationDuration = Duration(milliseconds: 350);
 
   final CalendarController _calendarController = CalendarController();
   final StatisticsController _statisticsController = StatisticsController();
@@ -54,9 +54,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _onDestinationSelected(int index) {
-    if (index == _selectedIndex) {
-      return;
-    }
+    if (index == _selectedIndex) return;
 
     setState(() {
       _selectedIndex = index;
@@ -64,7 +62,7 @@ class _AppShellState extends State<AppShell> {
 
     _pageController.animateToPage(
       index,
-      duration: const Duration(milliseconds: 350),
+      duration: _navAnimationDuration,
       curve: Curves.easeInOutCubic,
     );
   }
@@ -72,6 +70,7 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
       backgroundColor: colorScheme.background,
@@ -89,32 +88,40 @@ class _AppShellState extends State<AppShell> {
                 ],
               ),
             ),
+            // Оптимизированный Navigation Bar
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: colorScheme.surface,
-                  borderRadius: BorderRadius.circular(40),
-                  boxShadow: <BoxShadow>[
-                    BoxShadow(
-                      color: colorScheme.shadow.withOpacity(0.08),
-                      blurRadius: 18,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Container(
+                constraints: const BoxConstraints(
+                  maxWidth: 400, // Ограничиваем максимальную ширину
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                  child: Row(
-                    children: List<Widget>.generate(
-                      _items.length,
-                      (int index) => Expanded(child: _NavigationPillItem(
-                        item: _items[index],
-                        selected: index == _selectedIndex,
-                        onTap: () => _onDestinationSelected(index),
-                        animationDuration: _navAnimationDuration,
-                        colorScheme: colorScheme,
-                      )),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    borderRadius: BorderRadius.circular(32),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: colorScheme.shadow.withOpacity(0.1),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12), // было 8 → стало 12
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: List<Widget>.generate(
+                        _items.length,
+                            (int index) => _NavigationPillItem(
+                          item: _items[index],
+                          selected: index == _selectedIndex,
+                          onTap: () => _onDestinationSelected(index),
+                          animationDuration: _navAnimationDuration,
+                          colorScheme: colorScheme,
+                          textTheme: textTheme,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -127,13 +134,14 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-class _NavigationPillItem extends StatelessWidget {
+class _NavigationPillItem extends StatefulWidget {
   const _NavigationPillItem({
     required this.item,
     required this.selected,
     required this.onTap,
     required this.animationDuration,
     required this.colorScheme,
+    required this.textTheme,
   });
 
   final _NavigationItem item;
@@ -141,59 +149,111 @@ class _NavigationPillItem extends StatelessWidget {
   final VoidCallback onTap;
   final Duration animationDuration;
   final ColorScheme colorScheme;
+  final TextTheme textTheme;
+
+  @override
+  State<_NavigationPillItem> createState() => _NavigationPillItemState();
+}
+
+class _NavigationPillItemState extends State<_NavigationPillItem>
+    with TickerProviderStateMixin {
+  late final AnimationController _scaleController;
+  late final Animation<double> _scaleAnimation;
+  late final AnimationController _fadeController;
+  late final Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _scaleController = AnimationController(duration: widget.animationDuration, vsync: this);
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
+      CurvedAnimation(parent: _scaleController, curve: Curves.easeOutBack),
+    );
+
+    _fadeController = AnimationController(duration: widget.animationDuration, vsync: this);
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeOut),
+    );
+
+    if (widget.selected) {
+      _scaleController.forward();
+      _fadeController.forward();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_NavigationPillItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selected != oldWidget.selected) {
+      if (widget.selected) {
+        _scaleController.forward();
+        _fadeController.forward();
+      } else {
+        _scaleController.reverse();
+        _fadeController.reverse();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _scaleController.dispose();
+    _fadeController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final Color iconColor = selected
-        ? colorScheme.onPrimary
-        : colorScheme.onSurfaceVariant;
+    final Color iconColor = widget.selected
+        ? widget.colorScheme.onPrimary
+        : widget.colorScheme.onSurfaceVariant;
 
     return GestureDetector(
-      onTap: onTap,
+      onTap: widget.onTap,
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
-        duration: animationDuration,
-        curve: Curves.easeInOut,
+        duration: widget.animationDuration,
+        curve: Curves.easeInOutCubic,
         padding: EdgeInsets.symmetric(
-          vertical: 10,
-          horizontal: selected ? 18 : 12,
+          vertical: 16,    // ↑ больше высота
+          horizontal: widget.selected ? 24 : 20, // ↑ шире
         ),
         decoration: BoxDecoration(
-          color: selected
-              ? colorScheme.primary
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(30),
+          color: widget.selected ? widget.colorScheme.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(36), // ↑ крупнее скругление
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(item.icon, size: 22, color: iconColor),
-            AnimatedSwitcher(
-              duration: animationDuration,
-              transitionBuilder: (Widget child, Animation<double> animation) {
-                return FadeTransition(
-                  opacity: animation,
-                  child: SizeTransition(
-                    sizeFactor: animation,
-                    axis: Axis.horizontal,
-                    child: child,
+          children: [
+            // Крупная иконка
+            ScaleTransition(
+              scale: _scaleAnimation,
+              child: Icon(
+                widget.item.icon,
+                size: 26, // ↑ крупнее
+                color: iconColor,
+              ),
+            ),
+
+            // Текст с fade + slide
+            SizeTransition(
+              sizeFactor: _fadeController,
+              axis: Axis.horizontal,
+              child: FadeTransition(
+                opacity: _fadeAnimation,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 10), // ↑ больше отступ
+                  child: Text(
+                    widget.item.label,
+                    style: widget.textTheme.labelMedium?.copyWith(
+                      color: widget.colorScheme.onPrimary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14, // ↑ крупнее шрифт
+                    ),
                   ),
-                );
-              },
-              child: selected
-                  ? Padding(
-                      key: ValueKey<String>(item.label),
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Text(
-                        item.label,
-                        style: TextStyle(
-                          color: colorScheme.onPrimary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    )
-                  : const SizedBox(key: ValueKey<String>('empty'), width: 0),
+                ),
+              ),
             ),
           ],
         ),
