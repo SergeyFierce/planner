@@ -7,12 +7,16 @@ class CalendarEvent {
     required this.start,
     required this.duration,
     this.description,
+    this.isDone = false,
   });
 
   final String title;
   final DateTime start;
   final Duration duration;
   final String? description;
+
+  /// Флаг выполнения задачи
+  bool isDone;
 
   DateTime get end => start.add(duration);
 }
@@ -113,6 +117,11 @@ class CalendarController {
   void addEvent(CalendarEvent event) {
     _events.add(event);
     _events.sort((a, b) => a.start.compareTo(b.start));
+  }
+
+  /// Отметить / снять отметку «выполнено» у события.
+  void toggleEventCompletion(CalendarEvent event) {
+    event.isDone = !event.isDone;
   }
 
   List<FreeSlot> _computeFreeSlots() {

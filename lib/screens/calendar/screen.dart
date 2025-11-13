@@ -71,14 +71,6 @@ String _formatFriendlyDate(DateTime date) {
   }
 }
 
-String _friendlyGreeting(DateTime now) {
-  final hour = now.hour;
-  if (hour < 5) return 'Поздний вечер';
-  if (hour < 12) return 'Доброе утро';
-  if (hour < 18) return 'Добрый день';
-  return 'Добрый вечер';
-}
-
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key, required this.controller});
 
@@ -93,6 +85,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
   GlobalKey<_CalendarTimelineState>();
 
   CalendarController get _controller => widget.controller;
+
+  bool _isFreeSlotsExpanded = false; // Свободное время — по умолчанию свёрнуто
 
   Future<void> _onAddTaskPressed() async {
     final now = DateTime.now();
@@ -162,29 +156,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final freeSlots = _controller.freeSlots;
     final bestSlot = _controller.bestFocusSlot;
 
-    final now = DateTime.now();
-
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
         titleSpacing: 24,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _friendlyGreeting(now),
-              style: textTheme.labelLarge?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _formatFriendlyDate(_controller.day),
-              style: textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
+        title: Text(
+          _formatFriendlyDate(_controller.day),
+          style: textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
       body: SafeArea(
@@ -196,6 +176,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               _DaySummaryCard(
                 overview: overview,
                 day: _controller.day,
+                events: _controller.events, // ***
               ),
               const SizedBox(height: 16),
               Expanded(
@@ -205,16 +186,27 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   events: _controller.events,
                   freeSlots: freeSlots,
                   onAddRequested: _onAddTaskPressed,
+                  onToggleEventDone: (event) { // ***
+                    setState(() {
+                      _controller.toggleEventCompletion(event);
+                    });
+                  },
                 ),
               ),
               const SizedBox(height: 12),
               _FreeSlotsSection(
                 freeSlots: freeSlots,
                 bestSlot: bestSlot,
+                isExpanded: _isFreeSlotsExpanded,
+                onToggle: () {
+                  setState(() {
+                    _isFreeSlotsExpanded = !_isFreeSlotsExpanded;
+                  });
+                },
               ),
               const SizedBox(height: 12),
               Align(
-                alignment: Alignment.centerLeft,
+                alignment: Alignment.centerRight,
                 child: FilledButton.icon(
                   onPressed: _onAddTaskPressed,
                   icon: const Icon(Icons.add_task),
@@ -233,10 +225,12 @@ class _DaySummaryCard extends StatelessWidget {
   const _DaySummaryCard({
     required this.overview,
     required this.day,
+    required this.events, // ***
   });
 
   final DayOverview overview;
   final DateTime day;
+  final List<CalendarEvent> events;
 
   @override
   Widget build(BuildContext context) {
@@ -245,32 +239,67 @@ class _DaySummaryCard extends StatelessWidget {
     final cs = theme.colorScheme;
 
     final totalEvents = overview.totalEvents;
-    final busy = overview.busy;
-    final free = overview.free;
-    final next = overview.nextEvent;
-
     final hasEvents = totalEvents > 0;
+
     final now = DateTime.now();
     final isToday = DateUtils.isSameDay(day, now);
 
+    // Прогресс: выполнено / всего
+    final completedEvents = events.where((e) => e.isDone).length;
+    final double tasksProgress =
+    hasEvents ? (completedEvents / totalEvents) : 0.0;
+    final int tasksPercent = (tasksProgress * 100).round();
+
+    // Определяем текущую и следующую задачи
+    CalendarEvent? currentEvent;
+    CalendarEvent? upcomingEvent;
+
+    if (isToday && hasEvents) {
+      final sorted = [...events]..sort((a, b) => a.start.compareTo(b.start));
+      for (final e in sorted) {
+        final bool isOngoing =
+            e.start.isBefore(now) && e.end.isAfter(now);
+        if (isOngoing) {
+          currentEvent = e;
+          continue;
+        }
+
+        if (e.start.isAfter(now)) {
+          upcomingEvent ??= e;
+          if (currentEvent != null) break;
+        }
+      }
+    }
+
+    // Заголовок
     String primaryLine;
     if (hasEvents) {
-      primaryLine =
-      '$totalEvents задач · Занято ${_formatDurationShort(busy)} · Свободно ${_formatDurationShort(free)}';
+      primaryLine = '$totalEvents задач на этот день';
     } else if (isToday) {
       primaryLine = 'Сегодня пока нет задач';
     } else {
       primaryLine = 'На этот день пока нет задач';
     }
 
+    // Вторая строка: текущая + следующая
     String secondaryLine;
     IconData secondaryIcon;
 
-    if (isToday && next != null) {
+    if (isToday && currentEvent != null) {
+      secondaryIcon = Icons.play_arrow_rounded;
+      if (upcomingEvent != null) {
+        secondaryLine =
+        'Сейчас: ${currentEvent.title} до ${_formatTime(currentEvent.end)}. '
+            'Далее: ${upcomingEvent.title} в ${_formatTime(upcomingEvent.start)}';
+      } else {
+        secondaryLine =
+        'Сейчас: ${currentEvent.title} до ${_formatTime(currentEvent.end)}';
+      }
+    } else if (isToday && currentEvent == null && upcomingEvent != null) {
       secondaryIcon = Icons.schedule;
       secondaryLine =
-      'Ближайшее сегодня в ${_formatTime(next.start)} — ${next.title}';
-    } else if (isToday && hasEvents && next == null) {
+      'Следующее сегодня в ${_formatTime(upcomingEvent.start)} — ${upcomingEvent.title}';
+    } else if (isToday && hasEvents && currentEvent == null && upcomingEvent == null) {
       secondaryIcon = Icons.check_circle;
       secondaryLine = 'Все задачи на сегодня уже позади';
     } else if (!isToday && hasEvents) {
@@ -322,6 +351,7 @@ class _DaySummaryCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Основная строка
                 Text(
                   primaryLine,
                   style: textTheme.bodyMedium?.copyWith(
@@ -329,7 +359,49 @@ class _DaySummaryCard extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 8),
+                if (hasEvents) ...[
+                  // Прогресс по задачам
+                  Row(
+                    children: [
+                      Text(
+                        'Прогресс по задачам',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: cs.onPrimaryContainer.withOpacity(0.9),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$completedEvents / $totalEvents',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: cs.onPrimaryContainer,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '($tasksPercent%)',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: cs.onPrimaryContainer.withOpacity(0.9),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: tasksProgress,
+                      minHeight: 6,
+                      backgroundColor:
+                      cs.onPrimaryContainer.withOpacity(0.12),
+                      valueColor:
+                      AlwaysStoppedAnimation<Color>(cs.primary),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                // Вторая строка — текущее/следующее событие
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -345,7 +417,7 @@ class _DaySummaryCard extends StatelessWidget {
                         style: textTheme.bodySmall?.copyWith(
                           color: cs.onPrimaryContainer.withOpacity(0.9),
                         ),
-                        maxLines: 2,
+                        maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -364,10 +436,14 @@ class _FreeSlotsSection extends StatelessWidget {
   const _FreeSlotsSection({
     required this.freeSlots,
     required this.bestSlot,
+    required this.isExpanded,
+    required this.onToggle,
   });
 
   final List<FreeSlot> freeSlots;
   final FreeSlot? bestSlot;
+  final bool isExpanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -375,62 +451,115 @@ class _FreeSlotsSection extends StatelessWidget {
     final cs = theme.colorScheme;
     final textTheme = theme.textTheme;
 
-    if (freeSlots.isEmpty) {
-      return Text(
-        'Свободных окон почти нет — берегите себя и оставьте время на отдых.',
-        style: textTheme.bodySmall?.copyWith(
-          color: cs.onSurfaceVariant,
-        ),
-      );
-    }
+    final bool hasSlots = freeSlots.isNotEmpty;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Свободное время',
-          style: textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+    return Container( // *** карточка
+      decoration: BoxDecoration(
+        color: cs.surfaceVariant.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: cs.outlineVariant.withOpacity(0.6),
+          width: 1,
         ),
-        const SizedBox(height: 4),
-        if (bestSlot != null) ...[
-          Row(
-            children: [
-              Icon(
-                Icons.bolt_rounded,
-                size: 18,
-                color: cs.primary,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  'Лучшее окно для фокуса: '
-                      '${_formatTime(bestSlot!.start)} — ${_formatTime(bestSlot!.end)}'
-                      ' (${_formatDurationShort(bestSlot!.duration)})',
-                  style: textTheme.bodySmall?.copyWith(
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Text(
+                    'Свободное время',
+                    style: textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (hasSlots)
+                    Text(
+                      '${freeSlots.length} окон',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  const Spacer(),
+                  Icon(
+                    isExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 20,
                     color: cs.onSurfaceVariant,
                   ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 200),
+            crossFadeState: isExpanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            firstChild: const SizedBox.shrink(),
+            secondChild: hasSlots
+                ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 4),
+                if (bestSlot != null) ...[
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.bolt_rounded,
+                        size: 18,
+                        color: cs.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Лучшее окно для фокуса: '
+                              '${_formatTime(bestSlot!.start)} — ${_formatTime(bestSlot!.end)}'
+                              ' (${_formatDurationShort(bestSlot!.duration)})',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final slot in freeSlots)
+                      _FreeSlotChip(
+                        slot: slot,
+                        highlighted: bestSlot != null &&
+                            slot.start == bestSlot!.start &&
+                            slot.end == bestSlot!.end,
+                      ),
+                  ],
+                ),
+              ],
+            )
+                : Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Свободных окон почти нет — берегите себя и оставьте время на отдых.',
+                style: textTheme.bodySmall?.copyWith(
+                  color: cs.onSurfaceVariant,
                 ),
               ),
-            ],
+            ),
           ),
-          const SizedBox(height: 8),
         ],
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final slot in freeSlots)
-              _FreeSlotChip(
-                slot: slot,
-                highlighted: bestSlot != null &&
-                    slot.start == bestSlot!.start &&
-                    slot.end == bestSlot!.end,
-              ),
-          ],
-        ),
-      ],
+      ),
     );
   }
 }
@@ -500,12 +629,14 @@ class CalendarTimeline extends StatefulWidget {
     required this.events,
     required this.freeSlots,
     required this.onAddRequested,
+    required this.onToggleEventDone, // ***
   });
 
   final DateTime day;
   final List<CalendarEvent> events;
   final List<FreeSlot> freeSlots;
   final VoidCallback onAddRequested;
+  final ValueChanged<CalendarEvent> onToggleEventDone; // ***
 
   @override
   State<CalendarTimeline> createState() => _CalendarTimelineState();
@@ -557,7 +688,6 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
   }
 
   void scrollTo(DateTime time) {
-    // Учитываем верхний паддинг, чтобы позиционирование было точнее
     final offset =
         (_scrollEdgePadding + _offsetFor(time)) - _viewportHeight / 3;
     _animateTo(offset);
@@ -580,7 +710,6 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
   void _animateTo(double target, {bool jump = false}) {
     if (!_scrollController.hasClients) return;
 
-    // Контент теперь: высота дня + паддинги сверху/снизу
     final double maxOffset = math.max(
       0,
       (_dayHeight + _scrollEdgePadding * 2) - _viewportHeight,
@@ -625,7 +754,8 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
               child: NotificationListener<ScrollNotification>(
                 onNotification: (notification) {
                   if (notification.metrics.axis == Axis.vertical) {
-                    final viewport = notification.metrics.viewportDimension;
+                    final viewport =
+                        notification.metrics.viewportDimension;
                     if ((viewport - _viewportHeight).abs() > 0.5 ||
                         notification is ScrollUpdateNotification ||
                         notification is OverscrollNotification) {
@@ -639,8 +769,6 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
                 child: SingleChildScrollView(
                   controller: _scrollController,
                   child: Padding(
-                    // Важное место: добавляем паддинги сверху/снизу,
-                    // чтобы 00:00 и конец дня не обрезались.
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: SizedBox(
                       height: totalHeight,
@@ -660,7 +788,7 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
                           ),
                           // Фон для свободных интервалов
                           ..._buildFreeSlotBackgrounds(theme, totalHeight),
-                          // Индикатор "сейчас" — СЛОЙ МЕЖДУ сеткой/фоном и карточками
+                          // Индикатор "сейчас" между цифрами и лентой
                           if (showCurrentTime)
                             Positioned(
                               top: _offsetFor(_now),
@@ -785,6 +913,7 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
             startLabel: _formatTime(event.start),
             endLabel: _formatTime(event.end),
             availableHeight: height,
+            onToggleDone: () => widget.onToggleEventDone(event), // ***
           ),
         ),
       );
@@ -793,7 +922,6 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
     return widgets;
   }
 }
-
 
 class _TimelineGridPainter extends CustomPainter {
   _TimelineGridPainter({
@@ -885,12 +1013,14 @@ class _EventTile extends StatelessWidget {
     required this.startLabel,
     required this.endLabel,
     required this.availableHeight,
+    required this.onToggleDone, // ***
   });
 
   final CalendarEvent event;
   final String startLabel;
   final String endLabel;
   final double availableHeight;
+  final VoidCallback onToggleDone; // ***
 
   @override
   Widget build(BuildContext context) {
@@ -913,17 +1043,16 @@ class _EventTile extends StatelessWidget {
         .copyWith(
       color: cs.onPrimaryContainer,
       fontWeight: FontWeight.w700,
-      fontSize: isUltraCompact
-          ? 12
-          : (isCompact ? 13 : null),
+      fontSize: isUltraCompact ? 12 : (isCompact ? 13 : null),
+      decoration:
+      event.isDone ? TextDecoration.lineThrough : TextDecoration.none,
+      decorationThickness: 1.5,
     );
 
     final labelStyle = (theme.textTheme.labelMedium ?? const TextStyle())
         .copyWith(
       color: cs.onPrimaryContainer.withOpacity(0.8),
-      fontSize: isUltraCompact
-          ? 10
-          : (isCompact ? 11 : null),
+      fontSize: isUltraCompact ? 10 : (isCompact ? 11 : null),
     );
 
     final descStyle = (theme.textTheme.bodySmall ?? const TextStyle())
@@ -931,14 +1060,21 @@ class _EventTile extends StatelessWidget {
       color: cs.onPrimaryContainer.withOpacity(0.75),
     );
 
+    final Color bgColor = event.isDone
+        ? cs.primaryContainer.withOpacity(0.55)
+        : cs.primaryContainer.withOpacity(0.85);
+
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: cs.primaryContainer.withOpacity(0.85),
+        color: bgColor,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.primary.withOpacity(0.4), width: 1),
+        border: Border.all(
+          color: cs.primary.withOpacity(event.isDone ? 0.25 : 0.4),
+          width: 1,
+        ),
         boxShadow: <BoxShadow>[
           BoxShadow(
-            color: cs.primary.withOpacity(0.1),
+            color: cs.primary.withOpacity(event.isDone ? 0.04 : 0.1),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -959,35 +1095,56 @@ class _EventTile extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Text('$startLabel — $endLabel', style: labelStyle),
+            const SizedBox(width: 4),
+            Checkbox(
+              value: event.isDone,
+              onChanged: (_) => onToggleDone(),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
           ],
         )
-            : Column(
+            : Row(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(
-              event.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: titleStyle,
-            ),
-            SizedBox(height: isCompact ? 2 : 4),
-            Text(
-              '$startLabel — $endLabel',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: labelStyle,
-            ),
-            if (!isCompact && event.description != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                event.description!,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: descStyle,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    event.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: titleStyle,
+                  ),
+                  SizedBox(height: isCompact ? 2 : 4),
+                  Text(
+                    '$startLabel — $endLabel',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: labelStyle,
+                  ),
+                  if (!isCompact && event.description != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      event.description!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: descStyle,
+                    ),
+                  ],
+                ],
               ),
-            ],
+            ),
+            const SizedBox(width: 8),
+            Checkbox(
+              value: event.isDone,
+              onChanged: (_) => onToggleDone(),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
           ],
         ),
       ),
@@ -1008,61 +1165,66 @@ class _CurrentTimeIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textStyle =
-        Theme.of(context).textTheme.labelMedium?.copyWith(
+    final theme = Theme.of(context);
+    final textStyle = theme.textTheme.labelSmall?.copyWith(
+      color: color,
+      fontWeight: FontWeight.w600,
+    ) ??
+        TextStyle(
           color: color,
-          fontWeight: FontWeight.w700,
-        ) ??
-            TextStyle(color: color, fontWeight: FontWeight.w700);
+          fontWeight: FontWeight.w600,
+          fontSize: 11,
+        );
+
+    final Color bg = theme.colorScheme.surface.withOpacity(0.9);
 
     return IgnorePointer(
       ignoring: true,
-      child: Row(
-        children: <Widget>[
-          // Чип с текущим временем в колонке времени
-          SizedBox(
-            width: timeLabelWidth,
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(label, style: textStyle),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Точка-гайдер на границе между шкалой и задачами
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Линия только в области задач, с лёгким градиентом
-          Expanded(
-            child: Container(
-              height: 1.5,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    color,
-                    color.withOpacity(0.0),
-                  ],
+      child: SizedBox(
+        height: 1.5,
+        width: double.infinity,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // Линия "сейчас" во всю ширину
+            Positioned.fill(
+              child: Align(
+                alignment: Alignment.center,
+                child: Container(
+                  height: 1.5,
+                  color: color,
                 ),
               ),
             ),
-          ),
-        ],
+            // Подпись времени внутри колонки времени, прижата к правому краю
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SizedBox(
+                width: timeLabelWidth,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: bg,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: color.withOpacity(0.7),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Text(label, style: textStyle),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
-
