@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 
-import 'screens/calendar/screen.dart';
+import 'data/local_database.dart';
 import 'screens/calendar/controller.dart';
+import 'screens/calendar/screen.dart';
 import 'screens/settings/controller.dart';
 import 'screens/settings/screen.dart';
 import 'screens/statistics/controller.dart';
 import 'screens/statistics/screen.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key});
+  const AppShell({super.key, required this.database});
+
+  final LocalDatabase database;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -27,7 +30,7 @@ class _NavigationItem {
 class _AppShellState extends State<AppShell> {
   static const _navAnimationDuration = Duration(milliseconds: 350);
 
-  final CalendarController _calendarController = CalendarController();
+  late final CalendarController _calendarController;
   final StatisticsController _statisticsController = StatisticsController();
   final SettingsController _settingsController = SettingsController();
 
@@ -39,6 +42,8 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    _calendarController = CalendarController(database: widget.database)
+      ..initialize();
     _pageController = PageController(initialPage: _selectedIndex);
     _items = const <_NavigationItem>[
       _NavigationItem(icon: Icons.calendar_month_rounded, label: 'Календарь'),
@@ -49,6 +54,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    _calendarController.dispose();
     _pageController.dispose();
     super.dispose();
   }
