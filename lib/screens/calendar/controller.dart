@@ -56,26 +56,33 @@ class DayOverview {
 class CalendarController {
   CalendarController({
     DateTime? day,
-    List<CalendarEvent>? events,
-  })  : day = DateUtils.dateOnly(day ?? DateTime.now()),
-        _events = List<CalendarEvent>.from(
-          events ??
-              _createSampleEvents(
-                DateUtils.dateOnly(day ?? DateTime.now()),
-              ),
-        ) {
-    _events.sort((a, b) => a.start.compareTo(b.start));
+    Map<DateTime, List<CalendarEvent>>? events,
+  })  : _day = DateUtils.dateOnly(day ?? DateTime.now()),
+        _eventsByDay = <DateTime, List<CalendarEvent>>{} {
+    if (events != null) {
+      for (final entry in events.entries) {
+        final normalized = DateUtils.dateOnly(entry.key);
+        _eventsByDay[normalized] =
+            List<CalendarEvent>.from(entry.value, growable: true)
+              ..sort((a, b) => a.start.compareTo(b.start));
+      }
+    }
+
+    _eventsByDay.putIfAbsent(_day, () => _createSampleEvents(_day));
+    _sortEventsFor(_day);
   }
 
-  final DateTime day;
-  final List<CalendarEvent> _events;
+  DateTime _day;
+  final Map<DateTime, List<CalendarEvent>> _eventsByDay;
+
+  DateTime get day => _day;
 
   String get headline => 'Календарь';
   String get description =>
       'Планируйте свои события и отслеживайте ближайшие задачи.';
 
   /// Все события дня (read-only).
-  List<CalendarEvent> get events => List.unmodifiable(_events);
+  List<CalendarEvent> get events => List.unmodifiable(_currentEvents);
 
   /// Свободные промежутки внутри дня.
   List<FreeSlot> get freeSlots => _computeFreeSlots();
@@ -96,6 +103,21 @@ class CalendarController {
   /// Сводка по дню: сколько задач, сколько занято/свободно, ближайшее событие.
   DayOverview get overview => _buildOverview();
 
+  /// Дата, отображаемая на экране.
+  void changeDay(DateTime newDay) {
+    final normalized = DateUtils.dateOnly(newDay);
+    if (normalized == _day) return;
+    _day = normalized;
+    _eventsByDay.putIfAbsent(normalized, () => _createSampleEvents(normalized));
+    _sortEventsFor(normalized);
+  }
+
+  bool hasEventsOn(DateTime day) {
+    final normalized = DateUtils.dateOnly(day);
+    final list = _eventsByDay[normalized];
+    return list != null && list.isNotEmpty;
+  }
+
   /// Удобный метод — создать и сразу добавить событие.
   CalendarEvent createEvent({
     required String title,
@@ -115,8 +137,8 @@ class CalendarController {
 
   /// Добавить событие в день.
   void addEvent(CalendarEvent event) {
-    _events.add(event);
-    _events.sort((a, b) => a.start.compareTo(b.start));
+    _currentEvents.add(event);
+    _sortEventsFor(_day);
   }
 
   /// Отметить / снять отметку «выполнено» у события.
@@ -129,7 +151,7 @@ class CalendarController {
     final DateTime endOfDay = startOfDay.add(const Duration(days: 1));
 
     // Если вообще нет событий — весь день свободен.
-    if (_events.isEmpty) {
+    if (_currentEvents.isEmpty) {
       return [
         FreeSlot(start: startOfDay, end: endOfDay),
       ];
@@ -137,16 +159,16 @@ class CalendarController {
 
     const int minSlotMinutes = 15; // отсекаем совсем мелкие дырки
     final List<FreeSlot> result = [];
-    final List<CalendarEvent> sorted = [..._events]
+    final List<CalendarEvent> sorted = [..._currentEvents]
       ..sort((a, b) => a.start.compareTo(b.start));
 
     DateTime cursor = startOfDay;
 
     for (final event in sorted) {
-      DateTime eventStart =
-      event.start.isBefore(startOfDay) ? startOfDay : event.start;
-      DateTime eventEnd =
-      event.end.isAfter(endOfDay) ? endOfDay : event.end;
+      final DateTime eventStart =
+          event.start.isBefore(startOfDay) ? startOfDay : event.start;
+      final DateTime eventEnd =
+          event.end.isAfter(endOfDay) ? endOfDay : event.end;
 
       // Событие полностью внутри уже занятого промежутка.
       if (!eventEnd.isAfter(cursor)) {
@@ -180,19 +202,19 @@ class CalendarController {
 
   DayOverview _buildOverview({DateTime? now}) {
     final DateTime referenceNow = now ?? DateTime.now();
-    final List<CalendarEvent> sorted = [..._events]
+    final List<CalendarEvent> sorted = [..._currentEvents]
       ..sort((a, b) => a.start.compareTo(b.start));
     final List<FreeSlot> slots = freeSlots;
 
     final Duration busy =
-    sorted.fold(Duration.zero, (sum, e) => sum + e.duration);
+        sorted.fold(Duration.zero, (sum, e) => sum + e.duration);
     final Duration free =
-    slots.fold(Duration.zero, (sum, s) => sum + s.duration);
+        slots.fold(Duration.zero, (sum, s) => sum + s.duration);
 
     final CalendarEvent? firstEvent =
-    sorted.isNotEmpty ? sorted.first : null;
+        sorted.isNotEmpty ? sorted.first : null;
     final CalendarEvent? lastEvent =
-    sorted.isNotEmpty ? sorted.last : null;
+        sorted.isNotEmpty ? sorted.last : null;
 
     CalendarEvent? nextEvent;
     if (DateUtils.isSameDay(referenceNow, day)) {
@@ -254,5 +276,13 @@ class CalendarController {
         duration: const Duration(minutes: 50),
       ),
     ];
+  }
+
+  List<CalendarEvent> get _currentEvents {
+    return _eventsByDay.putIfAbsent(_day, () => _createSampleEvents(_day));
+  }
+
+  void _sortEventsFor(DateTime day) {
+    _eventsByDay[day]?.sort((a, b) => a.start.compareTo(b.start));
   }
 }

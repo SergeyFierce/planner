@@ -7,6 +7,56 @@ import 'controller.dart';
 
 const int _minutesInDay = 24 * 60;
 
+const List<String> _weekdayNames = <String>[
+  'Понедельник',
+  'Вторник',
+  'Среда',
+  'Четверг',
+  'Пятница',
+  'Суббота',
+  'Воскресенье',
+];
+
+const List<String> _weekdayShortNames = <String>[
+  'Пн',
+  'Вт',
+  'Ср',
+  'Чт',
+  'Пт',
+  'Сб',
+  'Вс',
+];
+
+const List<String> _monthNames = <String>[
+  'января',
+  'февраля',
+  'марта',
+  'апреля',
+  'мая',
+  'июня',
+  'июля',
+  'августа',
+  'сентября',
+  'октября',
+  'ноября',
+  'декабря',
+];
+
+const List<String> _monthNamesTitle = <String>[
+  'Январь',
+  'Февраль',
+  'Март',
+  'Апрель',
+  'Май',
+  'Июнь',
+  'Июль',
+  'Август',
+  'Сентябрь',
+  'Октябрь',
+  'Ноябрь',
+  'Декабрь',
+];
+
 String _formatTime(DateTime value) {
   final hours = value.hour.toString().padLeft(2, '0');
   final minutes = value.minute.toString().padLeft(2, '0');
@@ -32,42 +82,18 @@ String _formatDurationShort(Duration value) {
 }
 
 String _formatFriendlyDate(DateTime date) {
-  const weekdays = [
-    'Понедельник',
-    'Вторник',
-    'Среда',
-    'Четверг',
-    'Пятница',
-    'Суббота',
-    'Воскресенье',
-  ];
-  const months = [
-    'января',
-    'февраля',
-    'марта',
-    'апреля',
-    'мая',
-    'июня',
-    'июля',
-    'августа',
-    'сентября',
-    'октября',
-    'ноября',
-    'декабря',
-  ];
-
-  final weekdayName = weekdays[date.weekday - 1];
-  final monthName = months[date.month - 1];
+  final weekdayName = _weekdayNames[date.weekday - 1];
+  final monthName = _monthNames[date.month - 1];
 
   final today = DateTime.now();
   final tomorrow = today.add(const Duration(days: 1));
 
   if (DateUtils.isSameDay(date, today)) {
-    return 'Сегодня · $weekdayName, ${date.day} $monthName';
+    return 'Сегодня $weekdayName, ${date.day} $monthName ${date.year}';
   } else if (DateUtils.isSameDay(date, tomorrow)) {
-    return 'Завтра · $weekdayName, ${date.day} $monthName';
+    return 'Завтра $weekdayName, ${date.day} $monthName ${date.year}';
   } else {
-    return '$weekdayName, ${date.day} $monthName';
+    return '$weekdayName, ${date.day} $monthName ${date.year}';
   }
 }
 
@@ -81,12 +107,17 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
-  final GlobalKey<_CalendarTimelineState> _timelineKey =
-  GlobalKey<_CalendarTimelineState>();
+  late GlobalKey<_CalendarTimelineState> _timelineKey;
 
   CalendarController get _controller => widget.controller;
 
   bool _isFreeSlotsExpanded = false; // Свободное время — по умолчанию свёрнуто
+
+  @override
+  void initState() {
+    super.initState();
+    _timelineKey = GlobalKey<_CalendarTimelineState>();
+  }
 
   Future<void> _onAddTaskPressed() async {
     final now = DateTime.now();
@@ -135,6 +166,45 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
+  Future<void> _openCalendarSheet() async {
+    final selectedDate = await showGeneralDialog<DateTime>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Выбор даты',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 280),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return _CalendarTopSheet(
+          initialDay: _controller.day,
+          hasEvents: _controller.hasEventsOn,
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, -1),
+            end: Offset.zero,
+          ).animate(curved),
+          child: FadeTransition(opacity: curved, child: child),
+        );
+      },
+    );
+
+    if (!mounted || selectedDate == null) {
+      return;
+    }
+
+    setState(() {
+      _controller.changeDay(selectedDate);
+      _timelineKey = GlobalKey<_CalendarTimelineState>();
+    });
+  }
+
   static DateTime _snapToInterval(DateTime value, {int minutes = 5}) {
     final totalMinutes = value.hour * 60 + value.minute;
     final snappedMinutes = (totalMinutes / minutes).round() * minutes;
@@ -159,21 +229,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
+        scrolledUnderElevation: 0,
         titleSpacing: 24,
-        title: Text(
-          _formatFriendlyDate(_controller.day),
-          style: textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w700,
+        toolbarHeight: 92,
+        backgroundColor: theme.colorScheme.surfaceVariant.withOpacity(0.95),
+        surfaceTintColor: Colors.transparent,
+        shape: const ContinuousRectangleBorder(
+          borderRadius: BorderRadius.only(
+            bottomLeft: Radius.circular(28),
+            bottomRight: Radius.circular(28),
           ),
         ),
+        title: _DateSelectionButton(
+          label: _formatFriendlyDate(_controller.day),
+          onPressed: _openCalendarSheet,
+        ),
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _DaySummaryCard(
+      body: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _DaySummaryCard(
                 overview: overview,
                 day: _controller.day,
                 events: _controller.events, // ***
@@ -216,6 +293,66 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DateSelectionButton extends StatelessWidget {
+  const _DateSelectionButton({
+    required this.label,
+    required this.onPressed,
+  });
+
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        backgroundColor: cs.surface,
+        foregroundColor: cs.onSurface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: cs.primary.withOpacity(0.12),
+            ),
+            child: Icon(
+              Icons.calendar_month_rounded,
+              color: cs.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Icon(
+            Icons.expand_more_rounded,
+            color: cs.onSurfaceVariant,
+          ),
+        ],
       ),
     );
   }
@@ -402,26 +539,36 @@ class _DaySummaryCard extends StatelessWidget {
                   const SizedBox(height: 8),
                 ],
                 // Вторая строка — текущее/следующее событие
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Icon(
-                      secondaryIcon,
-                      size: 18,
-                      color: cs.onPrimaryContainer.withOpacity(0.9),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        secondaryLine,
-                        style: textTheme.bodySmall?.copyWith(
-                          color: cs.onPrimaryContainer.withOpacity(0.9),
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(
+                        width: 28,
+                        child: Center(
+                          child: Icon(
+                            secondaryIcon,
+                            size: 18,
+                            color: cs.onPrimaryContainer.withOpacity(0.9),
+                          ),
                         ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            secondaryLine,
+                            style: textTheme.bodySmall?.copyWith(
+                              color: cs.onPrimaryContainer.withOpacity(0.9),
+                            ),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -882,8 +1029,17 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
       ];
     }
 
+    final List<CalendarEvent> orderedEvents = <CalendarEvent>[...widget.events]
+      ..sort((a, b) {
+        final cmp = a.start.compareTo(b.start);
+        if (cmp != 0) return cmp;
+        if (a.isDone == b.isDone) return 0;
+        return a.isDone ? 1 : -1;
+      });
+
+    final now = DateTime.now();
     final List<Widget> widgets = <Widget>[];
-    for (final event in widget.events) {
+    for (final event in orderedEvents) {
       final startMinutes = event.start.isBefore(_startOfDay)
           ? 0
           : event.start.difference(_startOfDay).inMinutes;
@@ -902,17 +1058,31 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
       final double constrainedTop =
       top.clamp(0.0, math.max(0.0, totalHeight - height)).toDouble();
 
+      final bool isPast = event.end.isBefore(now);
+      final bool collapsedFutureDone =
+          event.isDone && event.start.isAfter(now);
+      final double effectiveHeight =
+          collapsedFutureDone ? _minEventHeight : height;
+      final double topOffset =
+          collapsedFutureDone ? constrainedTop + 4 : constrainedTop;
+      final double leftInset =
+          _timeLabelWidth + (collapsedFutureDone ? 48 : 16);
+      final double rightInset = collapsedFutureDone ? 72 : 16;
+
       widgets.add(
         Positioned(
-          top: constrainedTop,
-          left: _timeLabelWidth + 16,
-          right: 16,
-          height: height,
+          key: ObjectKey(event),
+          top: topOffset,
+          left: leftInset,
+          right: rightInset,
+          height: effectiveHeight,
           child: _EventTile(
             event: event,
             startLabel: _formatTime(event.start),
             endLabel: _formatTime(event.end),
-            availableHeight: height,
+            availableHeight: effectiveHeight,
+            isPast: isPast,
+            isCollapsed: collapsedFutureDone,
             onToggleDone: () => widget.onToggleEventDone(event), // ***
           ),
         ),
@@ -1013,6 +1183,8 @@ class _EventTile extends StatelessWidget {
     required this.startLabel,
     required this.endLabel,
     required this.availableHeight,
+    required this.isPast,
+    this.isCollapsed = false,
     required this.onToggleDone, // ***
   });
 
@@ -1020,6 +1192,8 @@ class _EventTile extends StatelessWidget {
   final String startLabel;
   final String endLabel;
   final double availableHeight;
+  final bool isPast;
+  final bool isCollapsed;
   final VoidCallback onToggleDone; // ***
 
   @override
@@ -1039,13 +1213,13 @@ class _EventTile extends StatelessWidget {
         ? const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
         : const EdgeInsets.all(12);
 
+    final bool strikeThrough = event.isDone || isPast;
     final titleStyle = (theme.textTheme.titleSmall ?? const TextStyle())
         .copyWith(
       color: cs.onPrimaryContainer,
       fontWeight: FontWeight.w700,
       fontSize: isUltraCompact ? 12 : (isCompact ? 13 : null),
-      decoration:
-      event.isDone ? TextDecoration.lineThrough : TextDecoration.none,
+      decoration: strikeThrough ? TextDecoration.lineThrough : TextDecoration.none,
       decorationThickness: 1.5,
     );
 
@@ -1060,92 +1234,102 @@ class _EventTile extends StatelessWidget {
       color: cs.onPrimaryContainer.withOpacity(0.75),
     );
 
-    final Color bgColor = event.isDone
-        ? cs.primaryContainer.withOpacity(0.55)
-        : cs.primaryContainer.withOpacity(0.85);
+    final Color bgColor = isCollapsed
+        ? cs.surfaceVariant.withOpacity(0.85)
+        : event.isDone
+            ? cs.primaryContainer.withOpacity(0.55)
+            : cs.primaryContainer.withOpacity(0.85);
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: cs.primary.withOpacity(event.isDone ? 0.25 : 0.4),
-          width: 1,
-        ),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: cs.primary.withOpacity(event.isDone ? 0.04 : 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+    final double opacity = isPast ? 0.65 : 1.0;
+
+    return Opacity(
+      opacity: opacity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: cs.primary.withOpacity(event.isDone ? 0.25 : 0.4),
+            width: 1,
           ),
-        ],
-      ),
-      child: Padding(
-        padding: padding,
-        child: isUltraCompact
-            ? Row(
-          children: [
-            Expanded(
-              child: Text(
-                event.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: titleStyle,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text('$startLabel — $endLabel', style: labelStyle),
-            const SizedBox(width: 4),
-            Checkbox(
-              value: event.isDone,
-              onChanged: (_) => onToggleDone(),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: VisualDensity.compact,
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: cs.primary.withOpacity(event.isDone ? 0.04 : 0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
             ),
           ],
-        )
-            : Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Text(
-                    event.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: titleStyle,
-                  ),
-                  SizedBox(height: isCompact ? 2 : 4),
-                  Text(
-                    '$startLabel — $endLabel',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: labelStyle,
-                  ),
-                  if (!isCompact && event.description != null) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      event.description!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: descStyle,
+        ),
+        child: Padding(
+          padding: padding,
+          child: isUltraCompact
+              ? Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        event.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: titleStyle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text('$startLabel — $endLabel', style: labelStyle),
+                    const SizedBox(width: 4),
+                    Checkbox(
+                      value: event.isDone,
+                      onChanged: (_) => onToggleDone(),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
                     ),
                   ],
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Checkbox(
-              value: event.isDone,
-              onChanged: (_) => onToggleDone(),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              visualDensity: VisualDensity.compact,
-            ),
-          ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            event.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: titleStyle,
+                          ),
+                          SizedBox(height: isCompact ? 2 : 4),
+                          Text(
+                            '$startLabel — $endLabel',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: labelStyle,
+                          ),
+                          if (!isCompact &&
+                              event.description != null &&
+                              !isCollapsed)
+                            ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                event.description!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: descStyle,
+                              ),
+                            ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Checkbox(
+                      value: event.isDone,
+                      onChanged: (_) => onToggleDone(),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
         ),
       ),
     );
@@ -1223,6 +1407,243 @@ class _CurrentTimeIndicator extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarTopSheet extends StatefulWidget {
+  const _CalendarTopSheet({
+    required this.initialDay,
+    required this.hasEvents,
+  });
+
+  final DateTime initialDay;
+  final bool Function(DateTime day) hasEvents;
+
+  @override
+  State<_CalendarTopSheet> createState() => _CalendarTopSheetState();
+}
+
+class _CalendarTopSheetState extends State<_CalendarTopSheet> {
+  late DateTime _visibleMonth;
+  late DateTime _selectedDay;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleMonth = DateTime(widget.initialDay.year, widget.initialDay.month);
+    _selectedDay = widget.initialDay;
+  }
+
+  void _changeMonth(int delta) {
+    setState(() {
+      _visibleMonth = DateTime(
+        _visibleMonth.year,
+        _visibleMonth.month + delta,
+      );
+    });
+  }
+
+  void _onDaySelected(DateTime day) {
+    setState(() {
+      _selectedDay = day;
+    });
+    Navigator.of(context).pop(day);
+  }
+
+  List<DateTime?> _buildGridDays() {
+    final firstDay = DateTime(_visibleMonth.year, _visibleMonth.month, 1);
+    final int daysInMonth = DateUtils.getDaysInMonth(
+      _visibleMonth.year,
+      _visibleMonth.month,
+    );
+    final int leadingEmpty = (firstDay.weekday + 6) % 7;
+    final int totalCells = ((leadingEmpty + daysInMonth) / 7).ceil() * 7;
+
+    return List<DateTime?>.generate(totalCells, (int index) {
+      final int dayNumber = index - leadingEmpty + 1;
+      if (dayNumber < 1 || dayNumber > daysInMonth) {
+        return null;
+      }
+      return DateTime(_visibleMonth.year, _visibleMonth.month, dayNumber);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final List<DateTime?> days = _buildGridDays();
+    final String monthLabel =
+        '${_monthNamesTitle[_visibleMonth.month - 1]} ${_visibleMonth.year}';
+
+    return Material(
+      color: Colors.transparent,
+      child: SafeArea(
+        bottom: false,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: cs.surface,
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(
+                      color: cs.shadow.withOpacity(0.2),
+                      blurRadius: 24,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          IconButton(
+                            onPressed: () => _changeMonth(-1),
+                            icon: const Icon(Icons.chevron_left_rounded),
+                          ),
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  monthLabel,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _formatFriendlyDate(_selectedDay),
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => _changeMonth(1),
+                            icon: const Icon(Icons.chevron_right_rounded),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: List<Widget>.generate(
+                          _weekdayShortNames.length,
+                          (int index) {
+                            return Expanded(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 4),
+                                child: Center(
+                                  child: Text(
+                                    _weekdayShortNames[index],
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: cs.onSurfaceVariant,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: days.length,
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 7,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 1,
+                        ),
+                        itemBuilder: (context, index) {
+                          final DateTime? day = days[index];
+                          if (day == null) {
+                            return const SizedBox.shrink();
+                          }
+                          final bool isSelected =
+                              DateUtils.isSameDay(day, _selectedDay);
+                          final bool isToday =
+                              DateUtils.isSameDay(day, DateTime.now());
+                          final bool hasEvents = widget.hasEvents(day);
+                          final Color backgroundColor = isSelected
+                              ? cs.primary
+                              : cs.surfaceVariant.withOpacity(0.4);
+                          final Color textColor = isSelected
+                              ? cs.onPrimary
+                              : cs.onSurface;
+
+                          return Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () => _onDaySelected(day),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                decoration: BoxDecoration(
+                                  color: backgroundColor,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: isToday && !isSelected
+                                        ? cs.primary.withOpacity(0.7)
+                                        : Colors.transparent,
+                                    width: 1.4,
+                                  ),
+                                ),
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Text(
+                                      '${day.day}',
+                                      style:
+                                          theme.textTheme.titleMedium?.copyWith(
+                                            color: textColor,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                    if (hasEvents)
+                                      Positioned(
+                                        bottom: 8,
+                                        child: Container(
+                                          width: 6,
+                                          height: 6,
+                                          decoration: BoxDecoration(
+                                            color: isSelected
+                                                ? cs.onPrimary
+                                                : cs.primary,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
