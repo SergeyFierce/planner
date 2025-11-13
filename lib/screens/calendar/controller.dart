@@ -53,34 +53,59 @@ class DayOverview {
   final CalendarEvent? nextEvent;
 }
 
+/// Статус дня для месячного календаря.
+enum DayMarkerStatus {
+  free,          // день свободен
+  hasEvents,     // есть дела в этот день (будущее / сегодня)
+  hasIncomplete, // есть невыполненные дела (в прошлом / сегодня)
+  allDone,       // все дела выполнены
+}
+
+DateTime _normalizeDate(DateTime d) => DateUtils.dateOnly(d);
+
 class CalendarController {
   CalendarController({
     DateTime? day,
     List<CalendarEvent>? events,
-  })  : day = DateUtils.dateOnly(day ?? DateTime.now()),
-        _events = List<CalendarEvent>.from(
-          events ??
-              _createSampleEvents(
-                DateUtils.dateOnly(day ?? DateTime.now()),
-              ),
-        ) {
-    _events.sort((a, b) => a.start.compareTo(b.start));
+  })  : _currentDay = _normalizeDate(day ?? DateTime.now()),
+        _eventsByDay = <DateTime, List<CalendarEvent>>{} {
+    final initial = _currentDay;
+    _eventsByDay[initial] = List<CalendarEvent>.from(
+      events ?? _createSampleEvents(initial),
+    )..sort((a, b) => a.start.compareTo(b.start));
   }
 
-  final DateTime day;
-  final List<CalendarEvent> _events;
+  DateTime _currentDay;
+  final Map<DateTime, List<CalendarEvent>> _eventsByDay;
+
+  DateTime get day => _currentDay;
 
   String get headline => 'Календарь';
   String get description =>
       'Планируйте свои события и отслеживайте ближайшие задачи.';
 
-  /// Все события дня (read-only).
-  List<CalendarEvent> get events => List.unmodifiable(_events);
+  List<CalendarEvent> get _currentEvents =>
+      _eventsByDay[_currentDay] ?? const <CalendarEvent>[];
 
-  /// Свободные промежутки внутри дня.
+  /// Все события выбранного дня (read-only).
+  List<CalendarEvent> get events => List.unmodifiable(_currentEvents);
+
+  /// Завершённые события выбранного дня.
+  List<CalendarEvent> get completedEvents =>
+      _currentEvents.where((e) => e.isDone).toList(growable: false);
+
+  /// События произвольного дня.
+  List<CalendarEvent> eventsForDay(DateTime date) {
+    final key = _normalizeDate(date);
+    final list = _eventsByDay[key];
+    if (list == null) return const <CalendarEvent>[];
+    return List.unmodifiable(list);
+  }
+
+  /// Свободные промежутки внутри дня (учитываются только НЕвыполненные события).
   List<FreeSlot> get freeSlots => _computeFreeSlots();
 
-  /// Самое длинное свободное окно — лучшее для фокусной работы.
+  /// Самое длительное свободное окно — лучшее для фокусной работы.
   FreeSlot? get bestFocusSlot {
     final slots = freeSlots;
     if (slots.isEmpty) return null;
@@ -95,6 +120,18 @@ class CalendarController {
 
   /// Сводка по дню: сколько задач, сколько занято/свободно, ближайшее событие.
   DayOverview get overview => _buildOverview();
+
+  /// Переключить текущий день (используется в месячном календаре).
+  void setDay(DateTime newDay) {
+    final normalized = _normalizeDate(newDay);
+    _currentDay = normalized;
+    _eventsByDay.putIfAbsent(
+      normalized,
+          () => _createSampleEvents(normalized),
+    );
+    _eventsByDay[normalized]!
+        .sort((a, b) => a.start.compareTo(b.start));
+  }
 
   /// Удобный метод — создать и сразу добавить событие.
   CalendarEvent createEvent({
@@ -113,10 +150,12 @@ class CalendarController {
     return event;
   }
 
-  /// Добавить событие в день.
+  /// Добавить событие в соответствующий день.
   void addEvent(CalendarEvent event) {
-    _events.add(event);
-    _events.sort((a, b) => a.start.compareTo(b.start));
+    final key = _normalizeDate(event.start);
+    final list = _eventsByDay.putIfAbsent(key, () => <CalendarEvent>[]);
+    list.add(event);
+    list.sort((a, b) => a.start.compareTo(b.start));
   }
 
   /// Отметить / снять отметку «выполнено» у события.
@@ -124,12 +163,46 @@ class CalendarController {
     event.isDone = !event.isDone;
   }
 
-  List<FreeSlot> _computeFreeSlots() {
-    final DateTime startOfDay = DateTime(day.year, day.month, day.day);
-    final DateTime endOfDay = startOfDay.add(const Duration(days: 1));
+  /// Статус произвольного дня для месячного календаря.
+  DayMarkerStatus getDayStatus(DateTime date) {
+    final key = _normalizeDate(date);
+    final list = _eventsByDay[key];
+    if (list == null || list.isEmpty) {
+      return DayMarkerStatus.free;
+    }
 
-    // Если вообще нет событий — весь день свободен.
-    if (_events.isEmpty) {
+    final hasDone = list.any((e) => e.isDone);
+    final hasIncomplete = list.any((e) => !e.isDone);
+
+    if (!hasIncomplete && hasDone) {
+      // Все завершены
+      return DayMarkerStatus.allDone;
+    }
+
+    final today = _normalizeDate(DateTime.now());
+    if (key.isBefore(today) && hasIncomplete) {
+      // В прошлом и есть невыполненные
+      return DayMarkerStatus.hasIncomplete;
+    }
+
+    // Сегодня или в будущем: просто «есть дела»
+    return DayMarkerStatus.hasEvents;
+  }
+
+  List<FreeSlot> _computeFreeSlots() {
+    final DateTime startOfDay =
+    DateTime(day.year, day.month, day.day);
+    final DateTime endOfDay =
+    startOfDay.add(const Duration(days: 1));
+
+    // Учитываем только НЕвыполненные события — выполненные освобождают время.
+    final List<CalendarEvent> activeEvents = _currentEvents
+        .where((e) => !e.isDone)
+        .toList()
+      ..sort((a, b) => a.start.compareTo(b.start));
+
+    // Если вообще нет активных событий — весь день свободен.
+    if (activeEvents.isEmpty) {
       return [
         FreeSlot(start: startOfDay, end: endOfDay),
       ];
@@ -137,12 +210,10 @@ class CalendarController {
 
     const int minSlotMinutes = 15; // отсекаем совсем мелкие дырки
     final List<FreeSlot> result = [];
-    final List<CalendarEvent> sorted = [..._events]
-      ..sort((a, b) => a.start.compareTo(b.start));
 
     DateTime cursor = startOfDay;
 
-    for (final event in sorted) {
+    for (final event in activeEvents) {
       DateTime eventStart =
       event.start.isBefore(startOfDay) ? startOfDay : event.start;
       DateTime eventEnd =
@@ -180,7 +251,7 @@ class CalendarController {
 
   DayOverview _buildOverview({DateTime? now}) {
     final DateTime referenceNow = now ?? DateTime.now();
-    final List<CalendarEvent> sorted = [..._events]
+    final List<CalendarEvent> sorted = [..._currentEvents]
       ..sort((a, b) => a.start.compareTo(b.start));
     final List<FreeSlot> slots = freeSlots;
 

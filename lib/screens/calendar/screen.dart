@@ -71,6 +71,12 @@ String _formatFriendlyDate(DateTime date) {
   }
 }
 
+/// Режим отображения календаря: день / месяц.
+enum CalendarViewMode {
+  day,
+  month,
+}
+
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key, required this.controller});
 
@@ -86,7 +92,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   CalendarController get _controller => widget.controller;
 
-  bool _isFreeSlotsExpanded = false; // Свободное время — по умолчанию свёрнуто
+  bool _isFreeSlotsExpanded = false;
+  bool _isCompletedExpanded = false;
+  CalendarViewMode _viewMode = CalendarViewMode.day;
+  late DateTime _visibleMonth;
+
+  Timer? _summaryTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleMonth = _controller.day;
+
+    // Таймер для обновления карточки "Сейчас / Далее" и прочих вычислений
+    _summaryTimer =
+        Timer.periodic(const Duration(seconds: 30), (_) {
+          if (!mounted) return;
+          setState(() {});
+        });
+  }
+
+  @override
+  void dispose() {
+    _summaryTimer?.cancel();
+    super.dispose();
+  }
 
   Future<void> _onAddTaskPressed() async {
     final now = DateTime.now();
@@ -155,6 +185,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final overview = _controller.overview;
     final freeSlots = _controller.freeSlots;
     final bestSlot = _controller.bestFocusSlot;
+    final events = _controller.events;
+    final completedEvents = _controller.completedEvents;
 
     return Scaffold(
       appBar: AppBar(
@@ -173,48 +205,134 @@ class _CalendarScreenState extends State<CalendarScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _DaySummaryCard(
-                overview: overview,
-                day: _controller.day,
-                events: _controller.events, // ***
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: CalendarTimeline(
-                  key: _timelineKey,
-                  day: _controller.day,
-                  events: _controller.events,
-                  freeSlots: freeSlots,
-                  onAddRequested: _onAddTaskPressed,
-                  onToggleEventDone: (event) { // ***
-                    setState(() {
-                      _controller.toggleEventCompletion(event);
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              _FreeSlotsSection(
-                freeSlots: freeSlots,
-                bestSlot: bestSlot,
-                isExpanded: _isFreeSlotsExpanded,
-                onToggle: () {
+              _ViewModeSwitcher(
+                mode: _viewMode,
+                onModeChanged: (mode) {
                   setState(() {
-                    _isFreeSlotsExpanded = !_isFreeSlotsExpanded;
+                    _viewMode = mode;
                   });
                 },
               ),
               const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: _onAddTaskPressed,
-                  icon: const Icon(Icons.add_task),
-                  label: const Text('Новая задача'),
+              if (_viewMode == CalendarViewMode.day) ...[
+                _DaySummaryCard(
+                  overview: overview,
+                  day: _controller.day,
+                  events: events,
                 ),
-              ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: CalendarTimeline(
+                    key: _timelineKey,
+                    day: _controller.day,
+                    events: events,
+                    freeSlots: freeSlots,
+                    onAddRequested: _onAddTaskPressed,
+                    onToggleEventDone: (event) {
+                      setState(() {
+                        _controller.toggleEventCompletion(event);
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _FreeSlotsSection(
+                  freeSlots: freeSlots,
+                  bestSlot: bestSlot,
+                  isExpanded: _isFreeSlotsExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _isFreeSlotsExpanded = !_isFreeSlotsExpanded;
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                _CompletedEventsSection(
+                  completedEvents: completedEvents,
+                  isExpanded: _isCompletedExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _isCompletedExpanded = !_isCompletedExpanded;
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.icon(
+                    onPressed: _onAddTaskPressed,
+                    icon: const Icon(Icons.add_task),
+                    label: const Text('Новая задача'),
+                  ),
+                ),
+              ] else ...[
+                Expanded(
+                  child: _MonthView(
+                    month: _visibleMonth,
+                    selectedDay: _controller.day,
+                    controller: _controller,
+                    onDaySelected: (date) {
+                      setState(() {
+                        _controller.setDay(date);
+                        _visibleMonth =
+                            DateTime(date.year, date.month, 1);
+                        _viewMode = CalendarViewMode.day;
+                      });
+                    },
+                  ),
+                ),
+              ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ViewModeSwitcher extends StatelessWidget {
+  const _ViewModeSwitcher({
+    required this.mode,
+    required this.onModeChanged,
+  });
+
+  final CalendarViewMode mode;
+  final ValueChanged<CalendarViewMode> onModeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: SegmentedButton<CalendarViewMode>(
+          segments: const <ButtonSegment<CalendarViewMode>>[
+            ButtonSegment<CalendarViewMode>(
+              value: CalendarViewMode.day,
+              label: Text('День'),
+              icon: Icon(Icons.view_day_rounded),
+            ),
+            ButtonSegment<CalendarViewMode>(
+              value: CalendarViewMode.month,
+              label: Text('Месяц'),
+              icon: Icon(Icons.calendar_month_rounded),
+            ),
+          ],
+          selected: {mode},
+          style: ButtonStyle(
+            visualDensity: VisualDensity.comfortable,
+            backgroundColor: MaterialStateProperty.resolveWith((states) {
+              if (states.contains(MaterialState.selected)) {
+                return cs.primary.withOpacity(0.08);
+              }
+              return cs.surfaceVariant.withOpacity(0.5);
+            }),
+          ),
+          onSelectionChanged: (selection) {
+            if (selection.isEmpty) return;
+            onModeChanged(selection.first);
+          },
         ),
       ),
     );
@@ -225,7 +343,7 @@ class _DaySummaryCard extends StatelessWidget {
   const _DaySummaryCard({
     required this.overview,
     required this.day,
-    required this.events, // ***
+    required this.events,
   });
 
   final DayOverview overview;
@@ -244,7 +362,7 @@ class _DaySummaryCard extends StatelessWidget {
     final now = DateTime.now();
     final isToday = DateUtils.isSameDay(day, now);
 
-    // Прогресс: выполнено / всего
+    // Прогресс: выполнено / всего (по событиям дня)
     final completedEvents = events.where((e) => e.isDone).length;
     final double tasksProgress =
     hasEvents ? (completedEvents / totalEvents) : 0.0;
@@ -281,34 +399,113 @@ class _DaySummaryCard extends StatelessWidget {
       primaryLine = 'На этот день пока нет задач';
     }
 
-    // Вторая строка: текущая + следующая
-    String secondaryLine;
-    IconData secondaryIcon;
+    // Линии для блока "Сейчас / Далее"
+    String? currentLine;
+    String? nextLine;
+    IconData? currentIcon;
+    IconData? nextIcon;
 
     if (isToday && currentEvent != null) {
-      secondaryIcon = Icons.play_arrow_rounded;
+      currentIcon = Icons.play_arrow_rounded;
+      currentLine =
+      'Сейчас: ${currentEvent.title} до ${_formatTime(currentEvent.end)}';
       if (upcomingEvent != null) {
-        secondaryLine =
-        'Сейчас: ${currentEvent.title} до ${_formatTime(currentEvent.end)}. '
-            'Далее: ${upcomingEvent.title} в ${_formatTime(upcomingEvent.start)}';
-      } else {
-        secondaryLine =
-        'Сейчас: ${currentEvent.title} до ${_formatTime(currentEvent.end)}';
+        nextIcon = Icons.schedule_rounded;
+        nextLine =
+        'Далее: ${upcomingEvent.title} в ${_formatTime(upcomingEvent.start)}';
       }
-    } else if (isToday && currentEvent == null && upcomingEvent != null) {
-      secondaryIcon = Icons.schedule;
-      secondaryLine =
+    } else if (isToday &&
+        currentEvent == null &&
+        upcomingEvent != null) {
+      nextIcon = Icons.schedule_rounded;
+      nextLine =
       'Следующее сегодня в ${_formatTime(upcomingEvent.start)} — ${upcomingEvent.title}';
-    } else if (isToday && hasEvents && currentEvent == null && upcomingEvent == null) {
-      secondaryIcon = Icons.check_circle;
-      secondaryLine = 'Все задачи на сегодня уже позади';
+    } else if (isToday &&
+        hasEvents &&
+        currentEvent == null &&
+        upcomingEvent == null) {
+      nextIcon = Icons.check_circle_rounded;
+      nextLine = 'Все задачи на сегодня уже позади';
     } else if (!isToday && hasEvents) {
-      secondaryIcon = Icons.calendar_month;
-      secondaryLine = 'План на этот день уже составлен';
+      nextIcon = Icons.calendar_month_rounded;
+      nextLine = 'План на этот день уже составлен';
     } else {
-      secondaryIcon = Icons.auto_awesome;
-      secondaryLine =
+      nextIcon = Icons.auto_awesome_rounded;
+      nextLine =
       'Запланируйте хотя бы одну задачу — я помогу всё разложить по времени';
+    }
+
+    TextStyle labelStrong(TextStyle? base) =>
+        (base ?? const TextStyle()).copyWith(
+          fontWeight: FontWeight.w700,
+        );
+
+    Widget buildHighlightedLine({
+      required IconData icon,
+      required String text,
+      required bool highlightKeyword,
+    }) {
+      final keywordEnd = text.indexOf(':');
+      final hasKeyword =
+          highlightKeyword && keywordEnd > 0 && keywordEnd < text.length - 1;
+
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            icon,
+            size: 18,
+            color: cs.onPrimaryContainer.withOpacity(0.9),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Container(
+              margin: const EdgeInsets.only(top: 2),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 4,
+              ),
+              decoration: BoxDecoration(
+                color: cs.onPrimaryContainer.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: hasKeyword
+                  ? RichText(
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                text: TextSpan(
+                  style: textTheme.bodySmall?.copyWith(
+                    color:
+                    cs.onPrimaryContainer.withOpacity(0.9),
+                  ),
+                  children: [
+                    TextSpan(
+                      text: text.substring(0, keywordEnd + 1),
+                      style: labelStrong(
+                          textTheme.bodySmall?.copyWith(
+                            color:
+                            cs.onPrimaryContainer.withOpacity(0.95),
+                          )),
+                    ),
+                    TextSpan(
+                      text: text.substring(keywordEnd + 1),
+                    ),
+                  ],
+                ),
+              )
+                  : Text(
+                text,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall?.copyWith(
+                  color:
+                  cs.onPrimaryContainer.withOpacity(0.9),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
     }
 
     return Container(
@@ -367,7 +564,8 @@ class _DaySummaryCard extends StatelessWidget {
                       Text(
                         'Прогресс по задачам',
                         style: textTheme.labelSmall?.copyWith(
-                          color: cs.onPrimaryContainer.withOpacity(0.9),
+                          color:
+                          cs.onPrimaryContainer.withOpacity(0.9),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -382,7 +580,8 @@ class _DaySummaryCard extends StatelessWidget {
                       Text(
                         '($tasksPercent%)',
                         style: textTheme.labelSmall?.copyWith(
-                          color: cs.onPrimaryContainer.withOpacity(0.9),
+                          color:
+                          cs.onPrimaryContainer.withOpacity(0.9),
                         ),
                       ),
                     ],
@@ -401,28 +600,20 @@ class _DaySummaryCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                 ],
-                // Вторая строка — текущее/следующее событие
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Icon(
-                      secondaryIcon,
-                      size: 18,
-                      color: cs.onPrimaryContainer.withOpacity(0.9),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        secondaryLine,
-                        style: textTheme.bodySmall?.copyWith(
-                          color: cs.onPrimaryContainer.withOpacity(0.9),
-                        ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
+                if (currentLine != null)
+                  buildHighlightedLine(
+                    icon: currentIcon ?? Icons.play_arrow_rounded,
+                    text: currentLine!,
+                    highlightKeyword: true,
+                  ),
+                if (currentLine != null && nextLine != null)
+                  const SizedBox(height: 6),
+                if (nextLine != null)
+                  buildHighlightedLine(
+                    icon: nextIcon ?? Icons.schedule_rounded,
+                    text: nextLine!,
+                    highlightKeyword: true,
+                  ),
               ],
             ),
           ),
@@ -453,7 +644,7 @@ class _FreeSlotsSection extends StatelessWidget {
 
     final bool hasSlots = freeSlots.isNotEmpty;
 
-    return Container( // *** карточка
+    return Container(
       decoration: BoxDecoration(
         color: cs.surfaceVariant.withOpacity(0.4),
         borderRadius: BorderRadius.circular(16),
@@ -524,7 +715,8 @@ class _FreeSlotsSection extends StatelessWidget {
                           'Лучшее окно для фокуса: '
                               '${_formatTime(bestSlot!.start)} — ${_formatTime(bestSlot!.end)}'
                               ' (${_formatDurationShort(bestSlot!.duration)})',
-                          style: textTheme.bodySmall?.copyWith(
+                          style:
+                          textTheme.bodySmall?.copyWith(
                             color: cs.onSurfaceVariant,
                           ),
                         ),
@@ -564,6 +756,125 @@ class _FreeSlotsSection extends StatelessWidget {
   }
 }
 
+class _CompletedEventsSection extends StatelessWidget {
+  const _CompletedEventsSection({
+    required this.completedEvents,
+    required this.isExpanded,
+    required this.onToggle,
+  });
+
+  final List<CalendarEvent> completedEvents;
+  final bool isExpanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    if (completedEvents.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
+    final sorted = [...completedEvents]
+      ..sort((a, b) => a.start.compareTo(b.start));
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceVariant.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: cs.outlineVariant.withOpacity(0.6),
+          width: 1,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Text(
+                    'Завершённые задачи',
+                    style: textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${sorted.length}',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    isExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 20,
+                    color: cs.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 200),
+            crossFadeState: isExpanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            firstChild: const SizedBox.shrink(),
+            secondChild: Column(
+              children: [
+                const SizedBox(height: 4),
+                for (final e in sorted)
+                  Padding(
+                    padding:
+                    const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle_rounded,
+                          size: 18,
+                          color: Colors.green.shade600,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            e.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${_formatTime(e.start)} – ${_formatTime(e.end)}',
+                          style: textTheme.labelSmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _FreeSlotChip extends StatelessWidget {
   const _FreeSlotChip({
     required this.slot,
@@ -583,7 +894,8 @@ class _FreeSlotChip extends StatelessWidget {
         : cs.outlineVariant.withOpacity(0.7);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding:
+      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
         color: highlighted
@@ -600,7 +912,9 @@ class _FreeSlotChip extends StatelessWidget {
           Icon(
             highlighted ? Icons.stars_rounded : Icons.schedule,
             size: 16,
-            color: highlighted ? cs.primary : cs.onSurfaceVariant,
+            color: highlighted
+                ? cs.primary
+                : cs.onSurfaceVariant,
           ),
           const SizedBox(width: 6),
           Text(
@@ -629,14 +943,14 @@ class CalendarTimeline extends StatefulWidget {
     required this.events,
     required this.freeSlots,
     required this.onAddRequested,
-    required this.onToggleEventDone, // ***
+    required this.onToggleEventDone,
   });
 
   final DateTime day;
   final List<CalendarEvent> events;
   final List<FreeSlot> freeSlots;
   final VoidCallback onAddRequested;
-  final ValueChanged<CalendarEvent> onToggleEventDone; // ***
+  final ValueChanged<CalendarEvent> onToggleEventDone;
 
   @override
   State<CalendarTimeline> createState() => _CalendarTimelineState();
@@ -646,7 +960,7 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
   static const double _timeLabelWidth = 74;
   static const double _pixelsPerMinute = 1.2; // фиксированный масштаб
   static const double _minEventHeight = 28;
-  static const double _scrollEdgePadding = 24.0; // отступы сверху/снизу
+  static const double _scrollEdgePadding = 24.0;
 
   late final ScrollController _scrollController;
   double _viewportHeight = 0;
@@ -657,18 +971,21 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
   DateTime get _startOfDay =>
       DateTime(widget.day.year, widget.day.month, widget.day.day);
 
+  double get _dayHeight => _minutesInDay * _pixelsPerMinute;
+
   @override
   void initState() {
     super.initState();
     _scrollController = ScrollController();
 
     _now = DateTime.now();
-    _timer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (!mounted) return;
-      setState(() {
-        _now = DateTime.now();
-      });
-    });
+    _timer =
+        Timer.periodic(const Duration(seconds: 15), (_) {
+          if (!mounted) return;
+          setState(() {
+            _now = DateTime.now();
+          });
+        });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -714,7 +1031,8 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
       0,
       (_dayHeight + _scrollEdgePadding * 2) - _viewportHeight,
     );
-    final double clamped = target.clamp(0.0, maxOffset).toDouble();
+    final double clamped =
+    target.clamp(0.0, maxOffset).toDouble();
 
     if (jump) {
       _scrollController.jumpTo(clamped);
@@ -726,8 +1044,6 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
       );
     }
   }
-
-  double get _dayHeight => _minutesInDay * _pixelsPerMinute;
 
   double _offsetFor(DateTime time) {
     final diff = time.difference(_startOfDay);
@@ -741,7 +1057,8 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final totalHeight = _dayHeight;
-    final showCurrentTime = DateUtils.isSameDay(_now, widget.day);
+    final showCurrentTime =
+    DateUtils.isSameDay(_now, widget.day);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -750,10 +1067,12 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),
             child: Material(
-              color: theme.colorScheme.surfaceVariant.withOpacity(0.35),
+              color: theme.colorScheme.surfaceVariant
+                  .withOpacity(0.35),
               child: NotificationListener<ScrollNotification>(
                 onNotification: (notification) {
-                  if (notification.metrics.axis == Axis.vertical) {
+                  if (notification.metrics.axis ==
+                      Axis.vertical) {
                     final viewport =
                         notification.metrics.viewportDimension;
                     if ((viewport - _viewportHeight).abs() > 0.5 ||
@@ -769,7 +1088,8 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
                 child: SingleChildScrollView(
                   controller: _scrollController,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    padding:
+                    const EdgeInsets.symmetric(vertical: 24),
                     child: SizedBox(
                       height: totalHeight,
                       child: Stack(
@@ -778,16 +1098,21 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
                           Positioned.fill(
                             child: CustomPaint(
                               painter: _TimelineGridPainter(
-                                pixelsPerMinute: _pixelsPerMinute,
-                                timeLabelWidth: _timeLabelWidth,
+                                pixelsPerMinute:
+                                _pixelsPerMinute,
+                                timeLabelWidth:
+                                _timeLabelWidth,
                                 theme: theme,
-                                textStyle: theme.textTheme.bodySmall ??
-                                    const TextStyle(fontSize: 12),
+                                textStyle:
+                                theme.textTheme.bodySmall ??
+                                    const TextStyle(
+                                        fontSize: 12),
                               ),
                             ),
                           ),
                           // Фон для свободных интервалов
-                          ..._buildFreeSlotBackgrounds(theme, totalHeight),
+                          ..._buildFreeSlotBackgrounds(
+                              theme, totalHeight),
                           // Индикатор "сейчас" между цифрами и лентой
                           if (showCurrentTime)
                             Positioned(
@@ -796,12 +1121,15 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
                               right: 0,
                               child: _CurrentTimeIndicator(
                                 label: _formatTime(_now),
-                                timeLabelWidth: _timeLabelWidth,
-                                color: theme.colorScheme.error,
+                                timeLabelWidth:
+                                _timeLabelWidth,
+                                color:
+                                theme.colorScheme.error,
                               ),
                             ),
                           // Карточки событий поверх всего
-                          ..._buildEventWidgets(theme, totalHeight),
+                          ..._buildEventWidgets(
+                              theme, totalHeight),
                         ],
                       ),
                     ),
@@ -829,19 +1157,28 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
     for (final slot in widget.freeSlots) {
       final startMinutes = slot.start.isBefore(_startOfDay)
           ? 0
-          : slot.start.difference(_startOfDay).inMinutes;
-      final endMinutes =
-      slot.end.isAfter(_startOfDay.add(const Duration(days: 1)))
+          : slot.start
+          .difference(_startOfDay)
+          .inMinutes;
+      final endMinutes = slot.end.isAfter(
+        _startOfDay.add(const Duration(days: 1)),
+      )
           ? _minutesInDay
-          : slot.end.difference(_startOfDay).inMinutes;
+          : slot.end
+          .difference(_startOfDay)
+          .inMinutes;
 
       final double top =
-          (startMinutes.clamp(0, _minutesInDay)) * _pixelsPerMinute;
+          (startMinutes.clamp(0, _minutesInDay)) *
+              _pixelsPerMinute;
       final double bottom =
-          (endMinutes.clamp(0, _minutesInDay)) * _pixelsPerMinute;
+          (endMinutes.clamp(0, _minutesInDay)) *
+              _pixelsPerMinute;
       final double height = math.max(bottom - top, 12.0);
-      final double constrainedTop =
-      top.clamp(0.0, math.max(0.0, totalHeight - height)).toDouble();
+      final double constrainedTop = top.clamp(
+        0.0,
+        math.max(0.0, totalHeight - height),
+      ).toDouble();
 
       widgets.add(
         Positioned(
@@ -855,7 +1192,8 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
               margin: const EdgeInsets.only(right: 8),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                color: cs.secondaryContainer.withOpacity(0.18),
+                color: cs.secondaryContainer
+                    .withOpacity(0.18),
               ),
             ),
           ),
@@ -866,7 +1204,10 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
     return widgets;
   }
 
-  List<Widget> _buildEventWidgets(ThemeData theme, double totalHeight) {
+  List<Widget> _buildEventWidgets(
+      ThemeData theme,
+      double totalHeight,
+      ) {
     if (widget.events.isEmpty) {
       return <Widget>[
         Positioned.fill(
@@ -874,8 +1215,9 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
             child: Text(
               'Запланируйте новую задачу через кнопку «Новая задача»',
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ),
@@ -883,24 +1225,40 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
     }
 
     final List<Widget> widgets = <Widget>[];
+    final now = _now;
+
     for (final event in widget.events) {
       final startMinutes = event.start.isBefore(_startOfDay)
           ? 0
-          : event.start.difference(_startOfDay).inMinutes;
+          : event.start
+          .difference(_startOfDay)
+          .inMinutes;
       final endDate = event.end;
       final endMinutes = endDate.isAfter(
         _startOfDay.add(const Duration(days: 1)),
       )
           ? _minutesInDay
-          : endDate.difference(_startOfDay).inMinutes;
+          : endDate
+          .difference(_startOfDay)
+          .inMinutes;
 
       final top =
-          (startMinutes.clamp(0, _minutesInDay)) * _pixelsPerMinute;
+          (startMinutes.clamp(0, _minutesInDay)) *
+              _pixelsPerMinute;
       final bottom =
-          (endMinutes.clamp(0, _minutesInDay)) * _pixelsPerMinute;
-      final height = math.max(bottom - top, _minEventHeight);
-      final double constrainedTop =
-      top.clamp(0.0, math.max(0.0, totalHeight - height)).toDouble();
+          (endMinutes.clamp(0, _minutesInDay)) *
+              _pixelsPerMinute;
+      final height =
+      math.max(bottom - top, _minEventHeight);
+      final double constrainedTop = top.clamp(
+        0.0,
+        math.max(0.0, totalHeight - height),
+      ).toDouble();
+
+      final bool isOngoing =
+          event.start.isBefore(now) &&
+              event.end.isAfter(now);
+      final bool isPast = event.end.isBefore(now);
 
       widgets.add(
         Positioned(
@@ -913,7 +1271,10 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
             startLabel: _formatTime(event.start),
             endLabel: _formatTime(event.end),
             availableHeight: height,
-            onToggleDone: () => widget.onToggleEventDone(event), // ***
+            isPast: isPast,
+            isCurrent: isOngoing,
+            onToggleDone: () =>
+                widget.onToggleEventDone(event),
           ),
         ),
       );
@@ -942,10 +1303,12 @@ class _TimelineGridPainter extends CustomPainter {
       ..color = theme.colorScheme.outlineVariant
       ..strokeWidth = 1;
     final Paint minorPaint = Paint()
-      ..color = theme.colorScheme.outlineVariant.withOpacity(0.4)
+      ..color = theme.colorScheme.outlineVariant
+          .withOpacity(0.4)
       ..strokeWidth = 1;
     final Paint minutePaint = Paint()
-      ..color = theme.colorScheme.outlineVariant.withOpacity(0.25)
+      ..color = theme.colorScheme.outlineVariant
+          .withOpacity(0.25)
       ..strokeWidth = 1;
 
     final double startX = timeLabelWidth;
@@ -954,19 +1317,24 @@ class _TimelineGridPainter extends CustomPainter {
     final bool showFiveMinutes = pixelsPerMinute >= 3.0;
     final bool showMinutes = pixelsPerMinute >= 6.0;
 
-    for (int minute = 0; minute <= _minutesInDay; minute++) {
+    for (int minute = 0;
+    minute <= _minutesInDay;
+    minute++) {
       final double dy = minute * pixelsPerMinute;
       if (dy > size.height + 1) {
         break;
       }
 
       if (minute % 60 == 0) {
-        canvas.drawLine(Offset(startX, dy), Offset(endX, dy), hourPaint);
+        canvas.drawLine(
+            Offset(startX, dy), Offset(endX, dy), hourPaint);
 
         final textPainter = TextPainter(
           text: TextSpan(
             text: _formatMinutes(minute),
-            style: textStyle.copyWith(fontWeight: FontWeight.w600),
+            style: textStyle.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
           textDirection: TextDirection.ltr,
         )..layout(maxWidth: timeLabelWidth - 12);
@@ -983,7 +1351,8 @@ class _TimelineGridPainter extends CustomPainter {
           Offset(endX, dy),
           minorPaint,
         );
-      } else if (showFiveMinutes && minute % 5 == 0) {
+      } else if (showFiveMinutes &&
+          minute % 5 == 0) {
         canvas.drawLine(
           Offset(startX + 24, dy),
           Offset(endX, dy),
@@ -1000,7 +1369,9 @@ class _TimelineGridPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _TimelineGridPainter oldDelegate) {
+  bool shouldRepaint(
+      covariant _TimelineGridPainter oldDelegate,
+      ) {
     return oldDelegate.pixelsPerMinute != pixelsPerMinute ||
         oldDelegate.theme != theme ||
         oldDelegate.textStyle != textStyle;
@@ -1013,69 +1384,100 @@ class _EventTile extends StatelessWidget {
     required this.startLabel,
     required this.endLabel,
     required this.availableHeight,
-    required this.onToggleDone, // ***
+    required this.isPast,
+    required this.isCurrent,
+    required this.onToggleDone,
   });
 
   final CalendarEvent event;
   final String startLabel;
   final String endLabel;
   final double availableHeight;
-  final VoidCallback onToggleDone; // ***
+  final bool isPast;
+  final bool isCurrent;
+  final VoidCallback onToggleDone;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    const double kTightHeight = 44; // ультра-компактный
-    const double kCompactHeight = 56; // компактный
+    const double kTightHeight = 44;
+    const double kCompactHeight = 56;
     final bool isUltraCompact = availableHeight < kTightHeight;
     final bool isCompact =
         !isUltraCompact && availableHeight < kCompactHeight;
 
     final EdgeInsets padding = isUltraCompact
-        ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
+        ? const EdgeInsets.symmetric(
+        horizontal: 10, vertical: 6)
         : isCompact
-        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
+        ? const EdgeInsets.symmetric(
+        horizontal: 12, vertical: 8)
         : const EdgeInsets.all(12);
 
-    final titleStyle = (theme.textTheme.titleSmall ?? const TextStyle())
+    final titleStyle = (theme.textTheme.titleSmall ??
+        const TextStyle())
         .copyWith(
       color: cs.onPrimaryContainer,
       fontWeight: FontWeight.w700,
-      fontSize: isUltraCompact ? 12 : (isCompact ? 13 : null),
-      decoration:
-      event.isDone ? TextDecoration.lineThrough : TextDecoration.none,
+      fontSize: isUltraCompact
+          ? 12
+          : (isCompact ? 13 : null),
+      decoration: event.isDone
+          ? TextDecoration.lineThrough
+          : TextDecoration.none,
       decorationThickness: 1.5,
     );
 
-    final labelStyle = (theme.textTheme.labelMedium ?? const TextStyle())
+    final labelStyle = (theme.textTheme.labelMedium ??
+        const TextStyle())
         .copyWith(
       color: cs.onPrimaryContainer.withOpacity(0.8),
-      fontSize: isUltraCompact ? 10 : (isCompact ? 11 : null),
+      fontSize: isUltraCompact
+          ? 10
+          : (isCompact ? 11 : null),
     );
 
-    final descStyle = (theme.textTheme.bodySmall ?? const TextStyle())
+    final descStyle = (theme.textTheme.bodySmall ??
+        const TextStyle())
         .copyWith(
       color: cs.onPrimaryContainer.withOpacity(0.75),
     );
 
-    final Color bgColor = event.isDone
-        ? cs.primaryContainer.withOpacity(0.55)
-        : cs.primaryContainer.withOpacity(0.85);
+    // Логика цвета:
+    // - выполнено => зелёный фон
+    // - время прошло (но не выполнено) => более бледный синий
+    // - остальное => обычный синий
+    Color bgColor;
+    Color borderColor;
+    if (event.isDone) {
+      bgColor = Colors.green.shade500.withOpacity(0.86);
+      borderColor =
+          Colors.green.shade700.withOpacity(0.85);
+    } else if (isPast) {
+      bgColor = cs.primaryContainer.withOpacity(0.55);
+      borderColor = cs.primary.withOpacity(0.25);
+    } else {
+      bgColor = cs.primaryContainer.withOpacity(0.85);
+      borderColor = cs.primary.withOpacity(0.4);
+    }
+
+    final boxShadowOpacity =
+    event.isDone ? 0.04 : (isCurrent ? 0.18 : 0.1);
 
     return DecoratedBox(
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: cs.primary.withOpacity(event.isDone ? 0.25 : 0.4),
-          width: 1,
+          color: borderColor,
+          width: event.isDone ? 1.2 : 1,
         ),
         boxShadow: <BoxShadow>[
           BoxShadow(
-            color: cs.primary.withOpacity(event.isDone ? 0.04 : 0.1),
-            blurRadius: 8,
+            color: cs.primary.withOpacity(boxShadowOpacity),
+            blurRadius: isCurrent ? 10 : 8,
             offset: const Offset(0, 4),
           ),
         ],
@@ -1094,44 +1496,55 @@ class _EventTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Text('$startLabel — $endLabel', style: labelStyle),
+            Text('$startLabel — $endLabel',
+                style: labelStyle),
             const SizedBox(width: 4),
             Checkbox(
               value: event.isDone,
               onChanged: (_) => onToggleDone(),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              materialTapTargetSize:
+              MaterialTapTargetSize.shrinkWrap,
               visualDensity: VisualDensity.compact,
             ),
           ],
         )
             : Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment:
+          CrossAxisAlignment.start,
           children: [
             Expanded(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                mainAxisAlignment:
+                MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
                   Text(
                     event.title,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    overflow:
+                    TextOverflow.ellipsis,
                     style: titleStyle,
                   ),
-                  SizedBox(height: isCompact ? 2 : 4),
+                  SizedBox(
+                      height:
+                      isCompact ? 2 : 4),
                   Text(
                     '$startLabel — $endLabel',
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    overflow:
+                    TextOverflow.ellipsis,
                     style: labelStyle,
                   ),
-                  if (!isCompact && event.description != null) ...[
+                  if (!isCompact &&
+                      event.description != null) ...[
                     const SizedBox(height: 4),
                     Text(
                       event.description!,
                       maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      overflow:
+                      TextOverflow.ellipsis,
                       style: descStyle,
                     ),
                   ],
@@ -1142,7 +1555,8 @@ class _EventTile extends StatelessWidget {
             Checkbox(
               value: event.isDone,
               onChanged: (_) => onToggleDone(),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              materialTapTargetSize:
+              MaterialTapTargetSize.shrinkWrap,
               visualDensity: VisualDensity.compact,
             ),
           ],
@@ -1166,17 +1580,19 @@ class _CurrentTimeIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final textStyle = theme.textTheme.labelSmall?.copyWith(
-      color: color,
-      fontWeight: FontWeight.w600,
-    ) ??
-        TextStyle(
+    final textStyle =
+        theme.textTheme.labelSmall?.copyWith(
           color: color,
           fontWeight: FontWeight.w600,
-          fontSize: 11,
-        );
+        ) ??
+            TextStyle(
+              color: color,
+              fontWeight: FontWeight.w600,
+              fontSize: 11,
+            );
 
-    final Color bg = theme.colorScheme.surface.withOpacity(0.9);
+    final Color bg =
+    theme.colorScheme.surface.withOpacity(0.9);
 
     return IgnorePointer(
       ignoring: true,
@@ -1196,7 +1612,7 @@ class _CurrentTimeIndicator extends StatelessWidget {
                 ),
               ),
             ),
-            // Подпись времени внутри колонки времени, прижата к правому краю
+            // Подпись времени внутри колонки времени
             Align(
               alignment: Alignment.centerLeft,
               child: SizedBox(
@@ -1204,14 +1620,17 @@ class _CurrentTimeIndicator extends StatelessWidget {
                 child: Align(
                   alignment: Alignment.centerRight,
                   child: Container(
-                    margin: const EdgeInsets.only(right: 4),
-                    padding: const EdgeInsets.symmetric(
+                    margin:
+                    const EdgeInsets.only(right: 4),
+                    padding:
+                    const EdgeInsets.symmetric(
                       horizontal: 6,
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
                       color: bg,
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius:
+                      BorderRadius.circular(6),
                       border: Border.all(
                         color: color.withOpacity(0.7),
                         width: 0.8,
@@ -1225,6 +1644,226 @@ class _CurrentTimeIndicator extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Месячный календарь с метками статуса дней.
+class _MonthView extends StatelessWidget {
+  const _MonthView({
+    required this.month,
+    required this.selectedDay,
+    required this.controller,
+    required this.onDaySelected,
+  });
+
+  final DateTime month;
+  final DateTime selectedDay;
+  final CalendarController controller;
+  final ValueChanged<DateTime> onDaySelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
+    final firstDayOfMonth =
+    DateTime(month.year, month.month, 1);
+    final daysInMonth =
+    DateUtils.getDaysInMonth(month.year, month.month);
+
+    // Пн = 1 ... Вс = 7 → 0..6, где Пн = 0
+    final int firstWeekdayIndex =
+        (firstDayOfMonth.weekday + 6) % 7;
+    final totalCells = firstWeekdayIndex + daysInMonth;
+    final rowsCount = (totalCells / 7).ceil();
+
+    final today = DateUtils.dateOnly(DateTime.now());
+    final selected = DateUtils.dateOnly(selectedDay);
+
+    const weekdayLabels = ['П', 'В', 'С', 'Ч', 'П', 'С', 'В'];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Заголовок месяца
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Center(
+            child: Text(
+              '${_monthName(month.month)} ${month.year}',
+              style: textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+        // Шапка с днями недели
+        Row(
+          children: [
+            for (final label in weekdayLabels)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    label,
+                    style: textTheme.labelMedium?.copyWith(
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: Column(
+            children: [
+              for (int row = 0; row < rowsCount; row++)
+                Expanded(
+                  child: Row(
+                    children: [
+                      for (int col = 0; col < 7; col++)
+                        Expanded(
+                          child: _buildCell(
+                            context: context,
+                            cs: cs,
+                            textTheme: textTheme,
+                            row: row,
+                            col: col,
+                            firstWeekdayIndex:
+                            firstWeekdayIndex,
+                            daysInMonth: daysInMonth,
+                            month: month,
+                            today: today,
+                            selected: selected,
+                            controller: controller,
+                            onDaySelected: onDaySelected,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCell({
+    required BuildContext context,
+    required ColorScheme cs,
+    required TextTheme textTheme,
+    required int row,
+    required int col,
+    required int firstWeekdayIndex,
+    required int daysInMonth,
+    required DateTime month,
+    required DateTime today,
+    required DateTime selected,
+    required CalendarController controller,
+    required ValueChanged<DateTime> onDaySelected,
+  }) {
+    final index = row * 7 + col;
+    final dayNumber = index - firstWeekdayIndex + 1;
+
+    if (dayNumber < 1 || dayNumber > daysInMonth) {
+      return const SizedBox.shrink();
+    }
+
+    final date =
+    DateTime(month.year, month.month, dayNumber);
+    final normalized = DateUtils.dateOnly(date);
+    final isToday = normalized == today;
+    final isSelected = normalized == selected;
+
+    final status = controller.getDayStatus(date);
+
+    Color? dotColor;
+    switch (status) {
+      case DayMarkerStatus.free:
+        dotColor = cs.outlineVariant.withOpacity(0.5);
+        break;
+      case DayMarkerStatus.hasEvents:
+        dotColor = cs.primary;
+        break;
+      case DayMarkerStatus.hasIncomplete:
+        dotColor = cs.error;
+        break;
+      case DayMarkerStatus.allDone:
+        dotColor = Colors.green.shade600;
+        break;
+    }
+
+    Color? bg;
+    Color textColor = cs.onSurface;
+    if (isSelected) {
+      bg = cs.primary.withOpacity(0.12);
+      textColor = cs.primary;
+    } else if (isToday) {
+      bg = cs.secondaryContainer.withOpacity(0.4);
+      textColor = cs.onSecondaryContainer;
+    }
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => onDaySelected(date),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Container(
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            mainAxisAlignment:
+            MainAxisAlignment.center,
+            children: [
+              Text(
+                '$dayNumber',
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight:
+                  isSelected || isToday
+                      ? FontWeight.w700
+                      : FontWeight.w500,
+                  color: textColor,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: dotColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _monthName(int month) {
+    const names = [
+      'январь',
+      'февраль',
+      'март',
+      'апрель',
+      'май',
+      'июнь',
+      'июль',
+      'август',
+      'сентябрь',
+      'октябрь',
+      'ноябрь',
+      'декабрь',
+    ];
+    return names[month - 1].replaceFirstMapped(
+      RegExp(r'^.'),
+          (m) => m.group(0)!.toUpperCase(),
     );
   }
 }
