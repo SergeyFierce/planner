@@ -62,15 +62,19 @@ String _formatFriendlyDate(DateTime date) {
   final today = DateTime.now();
   final tomorrow = today.add(const Duration(days: 1));
 
-  final yearPart = date.year.toString();
-
   if (DateUtils.isSameDay(date, today)) {
-    return 'Сегодня · $weekdayName, ${date.day} $monthName $yearPart';
+    return 'Сегодня · $weekdayName, ${date.day} $monthName';
   } else if (DateUtils.isSameDay(date, tomorrow)) {
-    return 'Завтра · $weekdayName, ${date.day} $monthName $yearPart';
+    return 'Завтра · $weekdayName, ${date.day} $monthName';
   } else {
-    return '$weekdayName, ${date.day} $monthName $yearPart';
+    return '$weekdayName, ${date.day} $monthName';
   }
+}
+
+/// Режим отображения календаря: день / месяц.
+enum CalendarViewMode {
+  day,
+  month,
 }
 
 class CalendarScreen extends StatefulWidget {
@@ -84,11 +88,13 @@ class CalendarScreen extends StatefulWidget {
 
 class _CalendarScreenState extends State<CalendarScreen> {
   final GlobalKey<_CalendarTimelineState> _timelineKey =
-      GlobalKey<_CalendarTimelineState>();
+  GlobalKey<_CalendarTimelineState>();
 
   CalendarController get _controller => widget.controller;
 
   bool _isFreeSlotsExpanded = false;
+  bool _isCompletedExpanded = false;
+  CalendarViewMode _viewMode = CalendarViewMode.day;
   late DateTime _visibleMonth;
 
   Timer? _summaryTimer;
@@ -159,36 +165,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  Future<void> _showMonthPickerSheet() async {
-    final selectedDay = await showModalBottomSheet<DateTime>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withOpacity(0.35),
-      isScrollControlled: true,
-      builder: (context) {
-        return _MonthPickerSheet(
-          initialMonth: _visibleMonth,
-          selectedDay: _controller.day,
-          controller: _controller,
-        );
-      },
-    );
-
-    if (selectedDay == null) {
-      return;
-    }
-
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _controller.setDay(selectedDay);
-      _visibleMonth = DateTime(selectedDay.year, selectedDay.month, 1);
-    });
-    _timelineKey.currentState?.scrollTo(selectedDay);
-  }
-
   static DateTime _snapToInterval(DateTime value, {int minutes = 5}) {
     final totalMinutes = value.hour * 60 + value.minute;
     final snappedMinutes = (totalMinutes / minutes).round() * minutes;
@@ -210,81 +186,102 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final freeSlots = _controller.freeSlots;
     final bestSlot = _controller.bestFocusSlot;
     final events = _controller.events;
-
-    final Color appBarColor = theme.colorScheme.surfaceVariant;
+    final completedEvents = _controller.completedEvents;
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.surface,
       appBar: AppBar(
         elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: appBarColor,
-        toolbarHeight: 76,
-        centerTitle: false,
-        titleSpacing: 0,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(
-            bottom: Radius.circular(28),
-          ),
-        ),
-        title: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: _DateSelectorButton(
-              label: _formatFriendlyDate(_controller.day),
-              onPressed: _showMonthPickerSheet,
-            ),
+        titleSpacing: 24,
+        title: Text(
+          _formatFriendlyDate(_controller.day),
+          style: textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
       body: SafeArea(
-        top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _DaySummaryCard(
-                overview: overview,
-                day: _controller.day,
-                events: events,
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: CalendarTimeline(
-                  key: _timelineKey,
-                  day: _controller.day,
-                  events: events,
-                  freeSlots: freeSlots,
-                  onAddRequested: _onAddTaskPressed,
-                  onToggleEventDone: (event) {
-                    setState(() {
-                      _controller.toggleEventCompletion(event);
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              _FreeSlotsSection(
-                freeSlots: freeSlots,
-                bestSlot: bestSlot,
-                isExpanded: _isFreeSlotsExpanded,
-                onToggle: () {
+              _ViewModeSwitcher(
+                mode: _viewMode,
+                onModeChanged: (mode) {
                   setState(() {
-                    _isFreeSlotsExpanded = !_isFreeSlotsExpanded;
+                    _viewMode = mode;
                   });
                 },
               ),
               const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: _onAddTaskPressed,
-                  icon: const Icon(Icons.add_task),
-                  label: const Text('Новая задача'),
+              if (_viewMode == CalendarViewMode.day) ...[
+                _DaySummaryCard(
+                  overview: overview,
+                  day: _controller.day,
+                  events: events,
                 ),
-              ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: CalendarTimeline(
+                    key: _timelineKey,
+                    day: _controller.day,
+                    events: events,
+                    freeSlots: freeSlots,
+                    onAddRequested: _onAddTaskPressed,
+                    onToggleEventDone: (event) {
+                      setState(() {
+                        _controller.toggleEventCompletion(event);
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _FreeSlotsSection(
+                  freeSlots: freeSlots,
+                  bestSlot: bestSlot,
+                  isExpanded: _isFreeSlotsExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _isFreeSlotsExpanded = !_isFreeSlotsExpanded;
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                _CompletedEventsSection(
+                  completedEvents: completedEvents,
+                  isExpanded: _isCompletedExpanded,
+                  onToggle: () {
+                    setState(() {
+                      _isCompletedExpanded = !_isCompletedExpanded;
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.icon(
+                    onPressed: _onAddTaskPressed,
+                    icon: const Icon(Icons.add_task),
+                    label: const Text('Новая задача'),
+                  ),
+                ),
+              ] else ...[
+                Expanded(
+                  child: _MonthView(
+                    month: _visibleMonth,
+                    selectedDay: _controller.day,
+                    controller: _controller,
+                    onDaySelected: (date) {
+                      setState(() {
+                        _controller.setDay(date);
+                        _visibleMonth =
+                            DateTime(date.year, date.month, 1);
+                        _viewMode = CalendarViewMode.day;
+                      });
+                    },
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -293,49 +290,50 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 }
 
-class _DateSelectorButton extends StatelessWidget {
-  const _DateSelectorButton({
-    required this.label,
-    required this.onPressed,
+class _ViewModeSwitcher extends StatelessWidget {
+  const _ViewModeSwitcher({
+    required this.mode,
+    required this.onModeChanged,
   });
 
-  final String label;
-  final VoidCallback onPressed;
+  final CalendarViewMode mode;
+  final ValueChanged<CalendarViewMode> onModeChanged;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+    final cs = Theme.of(context).colorScheme;
 
-    return TextButton(
-      onPressed: onPressed,
-      style: TextButton.styleFrom(
-        backgroundColor: cs.surface.withOpacity(0.35),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        foregroundColor: cs.onSurface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: cs.onSurface,
-              ),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: SegmentedButton<CalendarViewMode>(
+          segments: const <ButtonSegment<CalendarViewMode>>[
+            ButtonSegment<CalendarViewMode>(
+              value: CalendarViewMode.day,
+              label: Text('День'),
+              icon: Icon(Icons.view_day_rounded),
             ),
+            ButtonSegment<CalendarViewMode>(
+              value: CalendarViewMode.month,
+              label: Text('Месяц'),
+              icon: Icon(Icons.calendar_month_rounded),
+            ),
+          ],
+          selected: {mode},
+          style: ButtonStyle(
+            visualDensity: VisualDensity.comfortable,
+            backgroundColor: MaterialStateProperty.resolveWith((states) {
+              if (states.contains(MaterialState.selected)) {
+                return cs.primary.withOpacity(0.08);
+              }
+              return cs.surfaceVariant.withOpacity(0.5);
+            }),
           ),
-          const SizedBox(width: 8),
-          Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: cs.onSurface,
-          ),
-        ],
+          onSelectionChanged: (selection) {
+            if (selection.isEmpty) return;
+            onModeChanged(selection.first);
+          },
+        ),
       ),
     );
   }
@@ -452,7 +450,7 @@ class _DaySummaryCard extends StatelessWidget {
           highlightKeyword && keywordEnd > 0 && keywordEnd < text.length - 1;
 
       return Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
             icon,
@@ -462,6 +460,7 @@ class _DaySummaryCard extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Container(
+              margin: const EdgeInsets.only(top: 2),
               padding: const EdgeInsets.symmetric(
                 horizontal: 8,
                 vertical: 4,
@@ -749,6 +748,125 @@ class _FreeSlotsSection extends StatelessWidget {
                   color: cs.onSurfaceVariant,
                 ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CompletedEventsSection extends StatelessWidget {
+  const _CompletedEventsSection({
+    required this.completedEvents,
+    required this.isExpanded,
+    required this.onToggle,
+  });
+
+  final List<CalendarEvent> completedEvents;
+  final bool isExpanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    if (completedEvents.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
+    final sorted = [...completedEvents]
+      ..sort((a, b) => a.start.compareTo(b.start));
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceVariant.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: cs.outlineVariant.withOpacity(0.6),
+          width: 1,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Text(
+                    'Завершённые задачи',
+                    style: textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${sorted.length}',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    isExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 20,
+                    color: cs.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 200),
+            crossFadeState: isExpanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            firstChild: const SizedBox.shrink(),
+            secondChild: Column(
+              children: [
+                const SizedBox(height: 4),
+                for (final e in sorted)
+                  Padding(
+                    padding:
+                    const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle_rounded,
+                          size: 18,
+                          color: Colors.green.shade600,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            e.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${_formatTime(e.start)} – ${_formatTime(e.end)}',
+                          style: textTheme.labelSmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
@@ -1109,34 +1227,20 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
     final List<Widget> widgets = <Widget>[];
     final now = _now;
 
-    final List<CalendarEvent> collapsedEvents = [];
-    final List<CalendarEvent> regularEvents = [];
-
     for (final event in widget.events) {
-      if (event.isDone && event.start.isAfter(now)) {
-        collapsedEvents.add(event);
-      } else {
-        regularEvents.add(event);
-      }
-    }
-
-    List<CalendarEvent> sortByStart(List<CalendarEvent> list) =>
-        [...list]..sort((a, b) => a.start.compareTo(b.start));
-
-    for (final event in sortByStart(regularEvents)) {
       final startMinutes = event.start.isBefore(_startOfDay)
           ? 0
           : event.start
-              .difference(_startOfDay)
-              .inMinutes;
+          .difference(_startOfDay)
+          .inMinutes;
       final endDate = event.end;
       final endMinutes = endDate.isAfter(
         _startOfDay.add(const Duration(days: 1)),
       )
           ? _minutesInDay
           : endDate
-              .difference(_startOfDay)
-              .inMinutes;
+          .difference(_startOfDay)
+          .inMinutes;
 
       final top =
           (startMinutes.clamp(0, _minutesInDay)) *
@@ -1145,7 +1249,7 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
           (endMinutes.clamp(0, _minutesInDay)) *
               _pixelsPerMinute;
       final height =
-          math.max(bottom - top, _minEventHeight);
+      math.max(bottom - top, _minEventHeight);
       final double constrainedTop = top.clamp(
         0.0,
         math.max(0.0, totalHeight - height),
@@ -1156,75 +1260,21 @@ class _CalendarTimelineState extends State<CalendarTimeline> {
               event.end.isAfter(now);
       final bool isPast = event.end.isBefore(now);
 
-      final eventKey =
-          '${event.title}_${event.start.microsecondsSinceEpoch}_${event.duration.inMinutes}';
-
       widgets.add(
         Positioned(
-          key: ValueKey('event_$eventKey'),
           top: constrainedTop,
           left: _timeLabelWidth + 16,
           right: 16,
           height: height,
           child: _EventTile(
-            key: ValueKey('tile_$eventKey'),
             event: event,
             startLabel: _formatTime(event.start),
             endLabel: _formatTime(event.end),
             availableHeight: height,
             isPast: isPast,
             isCurrent: isOngoing,
-            onToggleDone: () => widget.onToggleEventDone(event),
-          ),
-        ),
-      );
-    }
-
-    for (final event in sortByStart(collapsedEvents)) {
-      final startMinutes = event.start.isBefore(_startOfDay)
-          ? 0
-          : event.start
-              .difference(_startOfDay)
-              .inMinutes;
-      final endMinutes = event.end.isAfter(
-        _startOfDay.add(const Duration(days: 1)),
-      )
-          ? _minutesInDay
-          : event.end
-              .difference(_startOfDay)
-              .inMinutes;
-
-      final top =
-          (startMinutes.clamp(0, _minutesInDay)) *
-              _pixelsPerMinute;
-      final bottom =
-          (endMinutes.clamp(0, _minutesInDay)) *
-              _pixelsPerMinute;
-      final double baseHeight =
-          math.max(bottom - top, _minEventHeight);
-      final double collapsedHeight =
-          math.max(32, math.min(baseHeight, 52));
-      final double constrainedTop = top.clamp(
-        0.0,
-        math.max(0.0, totalHeight - collapsedHeight),
-      ).toDouble();
-
-      final eventKey =
-          '${event.title}_${event.start.microsecondsSinceEpoch}_${event.duration.inMinutes}_collapsed';
-
-      widgets.add(
-        Positioned(
-          key: ValueKey(eventKey),
-          top: constrainedTop,
-          left: _timeLabelWidth + 80,
-          right: 24,
-          height: collapsedHeight,
-          child: _CollapsedEventTile(
-            key: ValueKey('collapsed_$eventKey'),
-            event: event,
-            startLabel: _formatTime(event.start),
-            endLabel: _formatTime(event.end),
-            onToggleDone: () => widget.onToggleEventDone(event),
+            onToggleDone: () =>
+                widget.onToggleEventDone(event),
           ),
         ),
       );
@@ -1330,7 +1380,6 @@ class _TimelineGridPainter extends CustomPainter {
 
 class _EventTile extends StatelessWidget {
   const _EventTile({
-    super.key,
     required this.event,
     required this.startLabel,
     required this.endLabel,
@@ -1367,44 +1416,33 @@ class _EventTile extends StatelessWidget {
         horizontal: 12, vertical: 8)
         : const EdgeInsets.all(12);
 
-    final bool shouldStrike = event.isDone || isPast;
-    final Color baseTextColor = cs.onPrimaryContainer.withOpacity(
-      shouldStrike ? 0.75 : 1,
-    );
-
     final titleStyle = (theme.textTheme.titleSmall ??
-            const TextStyle())
+        const TextStyle())
         .copyWith(
-      color: baseTextColor,
+      color: cs.onPrimaryContainer,
       fontWeight: FontWeight.w700,
       fontSize: isUltraCompact
           ? 12
           : (isCompact ? 13 : null),
-      decoration: shouldStrike
+      decoration: event.isDone
           ? TextDecoration.lineThrough
           : TextDecoration.none,
       decorationThickness: 1.5,
     );
 
     final labelStyle = (theme.textTheme.labelMedium ??
-            const TextStyle())
+        const TextStyle())
         .copyWith(
-      color: baseTextColor.withOpacity(0.8),
+      color: cs.onPrimaryContainer.withOpacity(0.8),
       fontSize: isUltraCompact
           ? 10
           : (isCompact ? 11 : null),
-      decoration: shouldStrike
-          ? TextDecoration.lineThrough
-          : TextDecoration.none,
     );
 
     final descStyle = (theme.textTheme.bodySmall ??
-            const TextStyle())
+        const TextStyle())
         .copyWith(
-      color: baseTextColor.withOpacity(0.75),
-      decoration: shouldStrike
-          ? TextDecoration.lineThrough
-          : TextDecoration.none,
+      color: cs.onPrimaryContainer.withOpacity(0.75),
     );
 
     // Логика цвета:
@@ -1428,28 +1466,26 @@ class _EventTile extends StatelessWidget {
     final boxShadowOpacity =
     event.isDone ? 0.04 : (isCurrent ? 0.18 : 0.1);
 
-    return Opacity(
-      opacity: isPast ? 0.75 : 1,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: borderColor,
-            width: event.isDone ? 1.2 : 1,
-          ),
-          boxShadow: <BoxShadow>[
-            BoxShadow(
-              color: cs.primary.withOpacity(boxShadowOpacity),
-              blurRadius: isCurrent ? 10 : 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: borderColor,
+          width: event.isDone ? 1.2 : 1,
         ),
-        child: Padding(
-          padding: padding,
-          child: isUltraCompact
-              ? Row(
+        boxShadow: <BoxShadow>[
+          BoxShadow(
+            color: cs.primary.withOpacity(boxShadowOpacity),
+            blurRadius: isCurrent ? 10 : 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: padding,
+        child: isUltraCompact
+            ? Row(
           children: [
             Expanded(
               child: Text(
@@ -1525,83 +1561,6 @@ class _EventTile extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _CollapsedEventTile extends StatelessWidget {
-  const _CollapsedEventTile({
-    super.key,
-    required this.event,
-    required this.startLabel,
-    required this.endLabel,
-    required this.onToggleDone,
-  });
-
-  final CalendarEvent event;
-  final String startLabel;
-  final String endLabel;
-  final VoidCallback onToggleDone;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surfaceVariant.withOpacity(0.95),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: cs.outlineVariant.withOpacity(0.7),
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          Icon(
-            Icons.check_circle_rounded,
-            size: 18,
-            color: Colors.green.shade600,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  event.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    decoration: TextDecoration.lineThrough,
-                    color: cs.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '$startLabel — $endLabel',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    decoration: TextDecoration.lineThrough,
-                    color: cs.onSurfaceVariant.withOpacity(0.8),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Checkbox(
-            value: true,
-            onChanged: (_) => onToggleDone(),
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            visualDensity: VisualDensity.compact,
-          ),
-        ],
       ),
     );
   }
@@ -1689,122 +1648,6 @@ class _CurrentTimeIndicator extends StatelessWidget {
   }
 }
 
-class _MonthPickerSheet extends StatefulWidget {
-  const _MonthPickerSheet({
-    required this.initialMonth,
-    required this.selectedDay,
-    required this.controller,
-  });
-
-  final DateTime initialMonth;
-  final DateTime selectedDay;
-  final CalendarController controller;
-
-  @override
-  State<_MonthPickerSheet> createState() => _MonthPickerSheetState();
-}
-
-class _MonthPickerSheetState extends State<_MonthPickerSheet> {
-  late DateTime _visibleMonth;
-
-  @override
-  void initState() {
-    super.initState();
-    _visibleMonth = DateTime(
-      widget.initialMonth.year,
-      widget.initialMonth.month,
-      1,
-    );
-  }
-
-  void _changeMonth(int delta) {
-    setState(() {
-      _visibleMonth = DateTime(
-        _visibleMonth.year,
-        _visibleMonth.month + delta,
-        1,
-      );
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-
-    return SafeArea(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          child: Material(
-            color: cs.surface,
-            elevation: 12,
-            borderRadius: const BorderRadius.all(Radius.circular(28)),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: cs.outlineVariant,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        IconButton(
-                          tooltip: 'Предыдущий месяц',
-                          onPressed: () => _changeMonth(-1),
-                          icon: const Icon(Icons.chevron_left_rounded),
-                        ),
-                        Expanded(
-                          child: Center(
-                            child: Text(
-                              '${_monthName(_visibleMonth.month)} ${_visibleMonth.year}',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Следующий месяц',
-                          onPressed: () => _changeMonth(1),
-                          icon: const Icon(Icons.chevron_right_rounded),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 320,
-                      child: _MonthView(
-                        month: _visibleMonth,
-                        selectedDay: widget.selectedDay,
-                        controller: widget.controller,
-                        onDaySelected: (date) {
-                          Navigator.of(context).pop(date);
-                        },
-                        compact: true,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// Месячный календарь с метками статуса дней.
 class _MonthView extends StatelessWidget {
   const _MonthView({
@@ -1812,14 +1655,12 @@ class _MonthView extends StatelessWidget {
     required this.selectedDay,
     required this.controller,
     required this.onDaySelected,
-    this.compact = false,
   });
 
   final DateTime month;
   final DateTime selectedDay;
   final CalendarController controller;
   final ValueChanged<DateTime> onDaySelected;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1846,18 +1687,18 @@ class _MonthView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (!compact)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Center(
-              child: Text(
-                '${_monthName(month.month)} ${month.year}',
-                style: textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+        // Заголовок месяца
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Center(
+            child: Text(
+              '${_monthName(month.month)} ${month.year}',
+              style: textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
+        ),
         // Шапка с днями недели
         Row(
           children: [
@@ -1867,8 +1708,7 @@ class _MonthView extends StatelessWidget {
                   child: Text(
                     label,
                     style: textTheme.labelMedium?.copyWith(
-                      color: cs.onSurfaceVariant
-                          .withOpacity(compact ? 0.7 : 1.0),
+                      color: cs.onSurfaceVariant,
                     ),
                   ),
                 ),
@@ -1892,14 +1732,13 @@ class _MonthView extends StatelessWidget {
                             row: row,
                             col: col,
                             firstWeekdayIndex:
-                                firstWeekdayIndex,
+                            firstWeekdayIndex,
                             daysInMonth: daysInMonth,
                             month: month,
                             today: today,
                             selected: selected,
                             controller: controller,
                             onDaySelected: onDaySelected,
-                            compact: compact,
                           ),
                         ),
                     ],
@@ -1925,7 +1764,6 @@ class _MonthView extends StatelessWidget {
     required DateTime selected,
     required CalendarController controller,
     required ValueChanged<DateTime> onDaySelected,
-    required bool compact,
   }) {
     final index = row * 7 + col;
     final dayNumber = index - firstWeekdayIndex + 1;
@@ -1959,44 +1797,28 @@ class _MonthView extends StatelessWidget {
     }
 
     Color? bg;
-    Color? border;
     Color textColor = cs.onSurface;
-    if (compact) {
-      if (isSelected) {
-        bg = cs.primary;
-        textColor = cs.onPrimary;
-      } else if (isToday) {
-        bg = cs.secondaryContainer;
-        textColor = cs.onSecondaryContainer;
-      } else {
-        bg = cs.surfaceVariant.withOpacity(0.35);
-        border = cs.surfaceVariant.withOpacity(0.2);
-      }
-    } else {
-      if (isSelected) {
-        bg = cs.primary.withOpacity(0.12);
-        textColor = cs.primary;
-      } else if (isToday) {
-        bg = cs.secondaryContainer.withOpacity(0.4);
-        textColor = cs.onSecondaryContainer;
-      }
+    if (isSelected) {
+      bg = cs.primary.withOpacity(0.12);
+      textColor = cs.primary;
+    } else if (isToday) {
+      bg = cs.secondaryContainer.withOpacity(0.4);
+      textColor = cs.onSecondaryContainer;
     }
 
     return InkWell(
-      borderRadius: BorderRadius.circular(compact ? 16 : 12),
+      borderRadius: BorderRadius.circular(12),
       onTap: () => onDaySelected(date),
       child: Padding(
-        padding: EdgeInsets.all(compact ? 2 : 4),
+        padding: const EdgeInsets.all(4),
         child: Container(
           decoration: BoxDecoration(
             color: bg,
-            borderRadius: BorderRadius.circular(compact ? 16 : 12),
-            border:
-                border != null ? Border.all(color: border, width: 1) : null,
+            borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
             mainAxisAlignment:
-                MainAxisAlignment.center,
+            MainAxisAlignment.center,
             children: [
               Text(
                 '$dayNumber',
@@ -2010,8 +1832,8 @@ class _MonthView extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Container(
-                width: compact ? 8 : 6,
-                height: compact ? 8 : 6,
+                width: 6,
+                height: 6,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: dotColor,
