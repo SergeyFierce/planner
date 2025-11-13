@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'controller.dart';
+import 'models.dart';
 
 const int _minutesInDay = 24 * 60;
 
@@ -29,6 +30,22 @@ String _formatDurationShort(Duration value) {
   } else {
     return '${minutes}м';
   }
+}
+
+String _formatWindowCount(int count) {
+  final mod100 = count % 100;
+  final mod10 = count % 10;
+  String suffix;
+  if (mod100 >= 11 && mod100 <= 14) {
+    suffix = 'окон';
+  } else if (mod10 == 1) {
+    suffix = 'окно';
+  } else if (mod10 >= 2 && mod10 <= 4) {
+    suffix = 'окна';
+  } else {
+    suffix = 'окон';
+  }
+  return '$count $suffix';
 }
 
 String _formatFriendlyDate(DateTime date) {
@@ -271,7 +288,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
   CalendarController get _controller => widget.controller;
 
   bool _isFreeSlotsExpanded = false;
-  bool _isCompletedExpanded = false;
   CalendarViewMode _viewMode = CalendarViewMode.day;
   late DateTime _visibleMonth;
 
@@ -281,6 +297,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   void initState() {
     super.initState();
     _visibleMonth = _controller.day;
+    widget.controller.addListener(_handleControllerChanged);
 
     // Таймер для обновления карточки "Сейчас / Далее" и прочих вычислений
     _summaryTimer =
@@ -291,9 +308,25 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant CalendarScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleControllerChanged);
+      widget.controller.addListener(_handleControllerChanged);
+      _visibleMonth = _controller.day;
+    }
+  }
+
+  @override
   void dispose() {
     _summaryTimer?.cancel();
+    widget.controller.removeListener(_handleControllerChanged);
     super.dispose();
+  }
+
+  void _handleControllerChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _openMonthPickerTopSheet() async {
@@ -354,45 +387,82 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Future<void> _onAddTaskPressed() async {
     final now = DateTime.now();
-    final initialTime = TimeOfDay(hour: now.hour, minute: now.minute);
+    final initialStart = DateUtils.isSameDay(now, _controller.day)
+        ? now
+        : DateTime(
+            _controller.day.year,
+            _controller.day.month,
+            _controller.day.day,
+            9,
+          );
+    final snapped = _snapToInterval(initialStart, minutes: 5);
 
-    final picked = await showTimePicker(
+    final result = await showModalBottomSheet<_TaskFormResult>(
       context: context,
-      initialEntryMode: TimePickerEntryMode.input,
-      initialTime: initialTime,
-      cancelText: 'Отмена',
-      confirmText: 'Добавить',
-      helpText: 'Выберите время задачи',
+      isScrollControlled: true,
+      builder: (context) {
+        return _TaskBottomSheet(
+          day: _controller.day,
+          initialStart: snapped,
+          isIntervalFree: (start, end) =>
+              !_controller.hasOverlap(start, end.difference(start)),
+        );
+      },
     );
 
-    if (picked == null || !mounted) {
+    if (!mounted || result == null) {
       return;
     }
 
-    final selectedDate = DateTime(
+    final start = DateTime(
       _controller.day.year,
       _controller.day.month,
       _controller.day.day,
-      picked.hour,
-      picked.minute,
+      result.startTime.hour,
+      result.startTime.minute,
     );
-    final snapped = _snapToInterval(selectedDate, minutes: 5);
-
-    final newEvent = _controller.createEvent(
-      title: 'Новая задача',
-      start: snapped,
-      duration: const Duration(minutes: 30),
+    final end = DateTime(
+      _controller.day.year,
+      _controller.day.month,
+      _controller.day.day,
+      result.endTime.hour,
+      result.endTime.minute,
     );
 
-    setState(() {});
+    if (!end.isAfter(start)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Время окончания должно быть позже начала.'),
+        ),
+      );
+      return;
+    }
 
-    _timelineKey.currentState?.scrollTo(snapped);
+    final duration = end.difference(start);
+    if (_controller.hasOverlap(start, duration)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Интервал пересекается с существующей задачей.'),
+        ),
+      );
+      return;
+    }
 
-    final timeRange =
-        '${_formatTime(snapped)} – ${_formatTime(newEvent.end)}';
+    final event = await _controller.createEvent(
+      title: result.title,
+      start: start,
+      duration: duration,
+      comment: result.comment,
+    );
+
     if (!mounted) {
       return;
     }
+
+    _timelineKey.currentState?.scrollTo(start);
+
+    final timeRange =
+        '${_formatTime(start)} – ${_formatTime(event.end)}';
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Задача добавлена на $timeRange')),
@@ -516,9 +586,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   freeSlots: freeSlots,
                   onAddRequested: _onAddTaskPressed,
                   onToggleEventDone: (event) {
-                    setState(() {
-                      _controller.toggleEventCompletion(event);
-                    });
+                    unawaited(_controller.toggleEventCompletion(event));
                   },
                 ),
               ),
@@ -932,7 +1000,7 @@ class _FreeSlotsSection extends StatelessWidget {
                   const SizedBox(width: 8),
                   if (hasSlots)
                     Text(
-                      '${freeSlots.length} окон',
+                      _formatWindowCount(freeSlots.length),
                       style: textTheme.bodySmall?.copyWith(
                         color: cs.onSurfaceVariant,
                       ),
@@ -1008,6 +1076,306 @@ class _FreeSlotsSection extends StatelessWidget {
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskFormResult {
+  const _TaskFormResult({
+    required this.title,
+    this.comment,
+    required this.startTime,
+    required this.endTime,
+  });
+
+  final String title;
+  final String? comment;
+  final TimeOfDay startTime;
+  final TimeOfDay endTime;
+}
+
+class _TaskBottomSheet extends StatefulWidget {
+  const _TaskBottomSheet({
+    required this.day,
+    required this.initialStart,
+    required this.isIntervalFree,
+  });
+
+  final DateTime day;
+  final DateTime initialStart;
+  final bool Function(DateTime start, DateTime end) isIntervalFree;
+
+  @override
+  State<_TaskBottomSheet> createState() => _TaskBottomSheetState();
+}
+
+class _TaskBottomSheetState extends State<_TaskBottomSheet> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _commentController = TextEditingController();
+
+  late TimeOfDay _startTime;
+  late TimeOfDay _endTime;
+  String? _intervalError;
+
+  @override
+  void initState() {
+    super.initState();
+    final start = widget.initialStart;
+    final initialEnd = start.add(const Duration(minutes: 30));
+    final clampedEnd = DateUtils.isSameDay(initialEnd, widget.day)
+        ? initialEnd
+        : DateTime(
+            widget.day.year,
+            widget.day.month,
+            widget.day.day,
+            23,
+            59,
+          );
+    _startTime = TimeOfDay(hour: start.hour, minute: start.minute);
+    _endTime = TimeOfDay(
+      hour: clampedEnd.hour,
+      minute: clampedEnd.minute,
+    );
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  DateTime _composeDate(TimeOfDay time) {
+    return DateTime(
+      widget.day.year,
+      widget.day.month,
+      widget.day.day,
+      time.hour,
+      time.minute,
+    );
+  }
+
+  Future<void> _pickTime({required bool isStart}) async {
+    final initial = isStart ? _startTime : _endTime;
+    final picked = await showTimePicker(
+      context: context,
+      initialEntryMode: TimePickerEntryMode.input,
+      initialTime: initial,
+      cancelText: 'Отмена',
+      confirmText: 'Выбрать',
+      helpText: isStart ? 'Время начала' : 'Время окончания',
+    );
+
+    if (picked == null) {
+      return;
+    }
+
+    setState(() {
+      _intervalError = null;
+      if (isStart) {
+        _startTime = picked;
+        final startDate = _composeDate(_startTime);
+        final endDate = _composeDate(_endTime);
+        if (!endDate.isAfter(startDate)) {
+          final proposedEnd = startDate.add(const Duration(minutes: 30));
+          final clamped = DateUtils.isSameDay(proposedEnd, widget.day)
+              ? proposedEnd
+              : DateTime(
+                  widget.day.year,
+                  widget.day.month,
+                  widget.day.day,
+                  23,
+                  59,
+                );
+          _endTime = TimeOfDay(hour: clamped.hour, minute: clamped.minute);
+        }
+      } else {
+        _endTime = picked;
+      }
+    });
+  }
+
+  void _submit() {
+    setState(() {
+      _intervalError = null;
+    });
+
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    final startDate = _composeDate(_startTime);
+    final endDate = _composeDate(_endTime);
+
+    if (!endDate.isAfter(startDate)) {
+      setState(() {
+        _intervalError = 'Время окончания должно быть позже начала';
+      });
+      return;
+    }
+
+    if (!widget.isIntervalFree(startDate, endDate)) {
+      setState(() {
+        _intervalError = 'Интервал пересекается с другой задачей';
+      });
+      return;
+    }
+
+    final title = _titleController.text.trim();
+    final comment = _commentController.text.trim();
+
+    Navigator.of(context).pop(
+      _TaskFormResult(
+        title: title,
+        comment: comment.isEmpty ? null : comment,
+        startTime: _startTime,
+        endTime: _endTime,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.only(bottom: mediaQuery.viewInsets.bottom),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: cs.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Text(
+                  'Новая задача',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _titleController,
+                  decoration: const InputDecoration(
+                    labelText: 'Описание задачи',
+                  ),
+                  textInputAction: TextInputAction.next,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Заполните описание';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _commentController,
+                  decoration: const InputDecoration(
+                    labelText: 'Комментарий',
+                    helperText: 'Не отображается в карточке задачи',
+                  ),
+                  maxLines: 2,
+                  textInputAction: TextInputAction.done,
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _TimeField(
+                        label: 'Начало',
+                        value: _startTime,
+                        onPressed: () => _pickTime(isStart: true),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _TimeField(
+                        label: 'Окончание',
+                        value: _endTime,
+                        onPressed: () => _pickTime(isStart: false),
+                      ),
+                    ),
+                  ],
+                ),
+                if (_intervalError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _intervalError!,
+                    style: TextStyle(
+                      color: cs.error,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _submit,
+                    child: const Text('Добавить задачу'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TimeField extends StatelessWidget {
+  const _TimeField({
+    required this.label,
+    required this.value,
+    required this.onPressed,
+  });
+
+  final String label;
+  final TimeOfDay value;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        alignment: Alignment.centerLeft,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value.format(context),
+            style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
           ),
         ],
       ),
