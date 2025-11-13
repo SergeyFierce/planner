@@ -1,19 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'app_shell.dart';
-import 'data/local_database.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  final database = LocalDatabase();
-  await database.init();
-  runApp(MyApp(database: database));
+void main() {
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key, required this.database});
-
-  final LocalDatabase database;
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +18,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF4A6CF7)),
         useMaterial3: true,
       ),
-      home: AppShell(database: database),
+      home: const AppShell(),
     );
   }
 }

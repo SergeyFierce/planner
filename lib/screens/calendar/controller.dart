@@ -1,37 +1,84 @@
 import 'package:flutter/material.dart';
 
-import '../../data/local_database.dart';
-import 'models.dart';
+/// Модель одного события календаря.
+class CalendarEvent {
+  CalendarEvent({
+    required this.title,
+    required this.start,
+    required this.duration,
+    this.description,
+    this.isDone = false,
+  });
+
+  final String title;
+  final DateTime start;
+  final Duration duration;
+  final String? description;
+
+  /// Флаг выполнения задачи
+  bool isDone;
+
+  DateTime get end => start.add(duration);
+}
+
+/// Свободный промежуток между событиями.
+class FreeSlot {
+  const FreeSlot({
+    required this.start,
+    required this.end,
+  });
+
+  final DateTime start;
+  final DateTime end;
+
+  Duration get duration => end.difference(start);
+}
+
+/// Сводка по дню: сколько задач, сколько занято/свободно, ближайшее событие.
+class DayOverview {
+  const DayOverview({
+    required this.totalEvents,
+    required this.busy,
+    required this.free,
+    required this.firstEvent,
+    required this.lastEvent,
+    required this.nextEvent,
+  });
+
+  final int totalEvents;
+  final Duration busy;
+  final Duration free;
+  final CalendarEvent? firstEvent;
+  final CalendarEvent? lastEvent;
+  final CalendarEvent? nextEvent;
+}
+
+/// Статус дня для месячного календаря.
+enum DayMarkerStatus {
+  free,          // день свободен
+  hasEvents,     // есть дела в этот день (будущее / сегодня)
+  hasIncomplete, // есть невыполненные дела (в прошлом / сегодня)
+  allDone,       // все дела выполнены
+}
 
 DateTime _normalizeDate(DateTime d) => DateUtils.dateOnly(d);
 
-class CalendarController extends ChangeNotifier {
+class CalendarController {
   CalendarController({
-    LocalDatabase? database,
     DateTime? day,
     List<CalendarEvent>? events,
-  })  : _database = database ?? LocalDatabase(),
-        _currentDay = _normalizeDate(day ?? DateTime.now()) {
-    if (events != null && events.isNotEmpty) {
-      for (final event in events) {
-        final key = _normalizeDate(event.start);
-        final list = _eventsByDay.putIfAbsent(key, () => <CalendarEvent>[]);
-        list.add(event);
-      }
-      _sortAllDays();
-      _initialized = true;
-    }
+  })  : _currentDay = _normalizeDate(day ?? DateTime.now()),
+        _eventsByDay = <DateTime, List<CalendarEvent>>{} {
+    final initial = _currentDay;
+    _eventsByDay[initial] = List<CalendarEvent>.from(
+      events ?? _createSampleEvents(initial),
+    )..sort((a, b) => a.start.compareTo(b.start));
   }
 
-  final LocalDatabase _database;
-  final Map<DateTime, List<CalendarEvent>> _eventsByDay =
-      <DateTime, List<CalendarEvent>>{};
-
   DateTime _currentDay;
-  bool _initialized = false;
+  final Map<DateTime, List<CalendarEvent>> _eventsByDay;
 
   DateTime get day => _currentDay;
-  bool get isInitialized => _initialized;
 
   String get headline => 'Календарь';
   String get description =>
@@ -74,102 +121,46 @@ class CalendarController extends ChangeNotifier {
   /// Сводка по дню: сколько задач, сколько занято/свободно, ближайшее событие.
   DayOverview get overview => _buildOverview();
 
-  Future<void> initialize() async {
-    if (_initialized && _eventsByDay.isNotEmpty) {
-      return;
-    }
-
-    await _database.init();
-    final allEvents = await _database.loadAllEvents();
-    _eventsByDay.clear();
-    for (final event in allEvents) {
-      final key = _normalizeDate(event.start);
-      final list = _eventsByDay.putIfAbsent(key, () => <CalendarEvent>[]);
-      list.add(event);
-    }
-    _ensureDayEntry(_currentDay);
-    _sortAllDays();
-    _initialized = true;
-    notifyListeners();
-  }
-
-  void _ensureDayEntry(DateTime day) {
-    final normalized = _normalizeDate(day);
-    _eventsByDay.putIfAbsent(normalized, () => <CalendarEvent>[]);
-  }
-
-  void _sortAllDays() {
-    for (final list in _eventsByDay.values) {
-      list.sort((a, b) => a.start.compareTo(b.start));
-    }
-  }
-
   /// Переключить текущий день (используется в месячном календаре).
   void setDay(DateTime newDay) {
     final normalized = _normalizeDate(newDay);
-    if (normalized == _currentDay) {
-      return;
-    }
     _currentDay = normalized;
-    _ensureDayEntry(_currentDay);
-    notifyListeners();
+    _eventsByDay.putIfAbsent(
+      normalized,
+          () => _createSampleEvents(normalized),
+    );
+    _eventsByDay[normalized]!
+        .sort((a, b) => a.start.compareTo(b.start));
   }
 
-  /// Создать и сразу добавить событие.
-  Future<CalendarEvent> createEvent({
+  /// Удобный метод — создать и сразу добавить событие.
+  CalendarEvent createEvent({
     required String title,
     required DateTime start,
     Duration duration = const Duration(minutes: 30),
     String? description,
-    String? comment,
-  }) async {
+  }) {
     final event = CalendarEvent(
       title: title,
       start: start,
       duration: duration,
       description: description,
-      comment: comment,
     );
+    addEvent(event);
+    return event;
+  }
 
-    await _database.init();
-    final int id = await _database.insertEvent(event);
-    final stored = event.copyWith(id: id);
-
-    final key = _normalizeDate(start);
+  /// Добавить событие в соответствующий день.
+  void addEvent(CalendarEvent event) {
+    final key = _normalizeDate(event.start);
     final list = _eventsByDay.putIfAbsent(key, () => <CalendarEvent>[]);
-    list
-      ..add(stored)
-      ..sort((a, b) => a.start.compareTo(b.start));
-
-    notifyListeners();
-    return stored;
+    list.add(event);
+    list.sort((a, b) => a.start.compareTo(b.start));
   }
 
   /// Отметить / снять отметку «выполнено» у события.
-  Future<void> toggleEventCompletion(CalendarEvent event) async {
+  void toggleEventCompletion(CalendarEvent event) {
     event.isDone = !event.isDone;
-    await _database.updateEvent(event);
-    notifyListeners();
-  }
-
-  bool hasOverlap(DateTime start, Duration duration, {CalendarEvent? ignore}) {
-    final key = _normalizeDate(start);
-    final list = _eventsByDay[key];
-    if (list == null || list.isEmpty) {
-      return false;
-    }
-
-    final DateTime end = start.add(duration);
-    for (final event in list) {
-      if (ignore != null && event.id == ignore.id) {
-        continue;
-      }
-      final bool overlaps = start.isBefore(event.end) && end.isAfter(event.start);
-      if (overlaps) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /// Статус произвольного дня для месячного календаря.
@@ -199,8 +190,10 @@ class CalendarController extends ChangeNotifier {
   }
 
   List<FreeSlot> _computeFreeSlots() {
-    final DateTime startOfDay = DateTime(day.year, day.month, day.day);
-    final DateTime endOfDay = startOfDay.add(const Duration(days: 1));
+    final DateTime startOfDay =
+    DateTime(day.year, day.month, day.day);
+    final DateTime endOfDay =
+    startOfDay.add(const Duration(days: 1));
 
     // Учитываем только НЕвыполненные события — выполненные освобождают время.
     final List<CalendarEvent> activeEvents = _currentEvents
@@ -222,8 +215,9 @@ class CalendarController extends ChangeNotifier {
 
     for (final event in activeEvents) {
       DateTime eventStart =
-          event.start.isBefore(startOfDay) ? startOfDay : event.start;
-      DateTime eventEnd = event.end.isAfter(endOfDay) ? endOfDay : event.end;
+      event.start.isBefore(startOfDay) ? startOfDay : event.start;
+      DateTime eventEnd =
+      event.end.isAfter(endOfDay) ? endOfDay : event.end;
 
       // Событие полностью внутри уже занятого промежутка.
       if (!eventEnd.isAfter(cursor)) {
@@ -262,14 +256,14 @@ class CalendarController extends ChangeNotifier {
     final List<FreeSlot> slots = freeSlots;
 
     final Duration busy =
-        sorted.fold(Duration.zero, (sum, e) => sum + e.duration);
+    sorted.fold(Duration.zero, (sum, e) => sum + e.duration);
     final Duration free =
-        slots.fold(Duration.zero, (sum, s) => sum + s.duration);
+    slots.fold(Duration.zero, (sum, s) => sum + s.duration);
 
     final CalendarEvent? firstEvent =
-        sorted.isNotEmpty ? sorted.first : null;
+    sorted.isNotEmpty ? sorted.first : null;
     final CalendarEvent? lastEvent =
-        sorted.isNotEmpty ? sorted.last : null;
+    sorted.isNotEmpty ? sorted.last : null;
 
     CalendarEvent? nextEvent;
     if (DateUtils.isSameDay(referenceNow, day)) {
@@ -289,5 +283,47 @@ class CalendarController extends ChangeNotifier {
       lastEvent: lastEvent,
       nextEvent: nextEvent,
     );
+  }
+
+  // Демонстрационные события — для предварительного вида экрана.
+  static List<CalendarEvent> _createSampleEvents(DateTime day) {
+    final base = DateTime(day.year, day.month, day.day);
+    return <CalendarEvent>[
+      CalendarEvent(
+        title: 'Командный стендап',
+        start: base.add(const Duration(hours: 8, minutes: 30)),
+        duration: const Duration(minutes: 30),
+      ),
+      CalendarEvent(
+        title: 'Дизайн-ревью',
+        start: base.add(const Duration(hours: 9, minutes: 30)),
+        duration: const Duration(minutes: 90),
+      ),
+      CalendarEvent(
+        title: 'Персональная работа',
+        start: base.add(const Duration(hours: 11)),
+        duration: const Duration(minutes: 110),
+      ),
+      CalendarEvent(
+        title: 'Обед',
+        start: base.add(const Duration(hours: 13)),
+        duration: const Duration(minutes: 60),
+      ),
+      CalendarEvent(
+        title: 'Созвон с клиентом',
+        start: base.add(const Duration(hours: 14, minutes: 45)),
+        duration: const Duration(minutes: 45),
+      ),
+      CalendarEvent(
+        title: 'Фокус-время',
+        start: base.add(const Duration(hours: 16)),
+        duration: const Duration(minutes: 120),
+      ),
+      CalendarEvent(
+        title: 'Спорт',
+        start: base.add(const Duration(hours: 19)),
+        duration: const Duration(minutes: 50),
+      ),
+    ];
   }
 }
